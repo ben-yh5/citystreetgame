@@ -9,6 +9,14 @@ export function showMessage(text, type) {
     setTimeout(() => messageDiv.classList.remove('show'), 3000);
 }
 
+function setUnfoundStreets(on) {
+    const toggle = document.getElementById('show-unfound-toggle');
+    if (toggle) toggle.checked = on;
+    if (state.map && state.map.getLayer('streets-unfound')) {
+        state.map.setPaintProperty('streets-unfound', 'line-opacity', on ? 0.2 : 0);
+    }
+}
+
 export function setLoadingState(isLoading, text = '') {
     const screen = document.getElementById('loading-screen');
     const textEl = document.getElementById('loading-text');
@@ -82,6 +90,14 @@ export function updateModeUI() {
     const totalStat = document.getElementById('total-stat');
     const distanceStat = document.getElementById('distance-stat');
     
+    // Restore sections that may have been hidden by other modes
+    const statsSection = document.getElementById('stats-section');
+    const foundItemsSec = document.getElementById('found-items-section');
+    const mapToolsSection = document.getElementById('map-tools-section');
+    if (statsSection) statsSection.style.display = '';
+    if (foundItemsSec) foundItemsSec.style.display = '';
+    if (mapToolsSection) mapToolsSection.style.display = '';
+
     if (state.gameMode === 'streets') {
         if (streetInputContainer) streetInputContainer.style.display = 'block';
         if (intersectionDisplayContainer) intersectionDisplayContainer.style.display = 'none';
@@ -90,27 +106,29 @@ export function updateModeUI() {
         if (foundListTitle) foundListTitle.textContent = 'Found Streets';
         if (itemSearch) itemSearch.placeholder = 'Search found streets...';
         if (scoreLabel) scoreLabel.textContent = 'of street distance';
-        
+
         // Show all stats for street mode
         if (foundStat) foundStat.style.display = 'block';
         if (percentageStat) percentageStat.style.display = 'block';
         if (totalStat) totalStat.style.display = 'block';
         if (distanceStat) distanceStat.style.display = 'block';
-        
+
+        setUnfoundStreets(false);
+
     } else if (state.gameMode === 'intersections') {
         if (streetInputContainer) streetInputContainer.style.display = 'none';
         if (intersectionDisplayContainer) intersectionDisplayContainer.style.display = 'block';
         if (autofillSection) autofillSection.style.display = 'none';
-        if (foundItemsSection) foundItemsSection.style.display = 'none';  // Hide found intersections list
+        if (foundItemsSection) foundItemsSection.style.display = 'none';
         if (scoreLabel) scoreLabel.textContent = 'average accuracy';
-        
-        // Hide all stats for intersection mode - only show main score
+
         if (foundStat) foundStat.style.display = 'none';
         if (percentageStat) percentageStat.style.display = 'none';
         if (totalStat) totalStat.style.display = 'none';
         if (distanceStat) distanceStat.style.display = 'none';
-        
-        // Update intersection display with proper messaging
+
+        setUnfoundStreets(true);
+
         if (state.currentIntersection) {
             const targetIntersection = document.getElementById('target-intersection');
             if (targetIntersection) {
@@ -120,24 +138,43 @@ export function updateModeUI() {
                     displayText += ` (${state.currentIntersection.locationCount} locations)`;
                 }
                 targetIntersection.textContent = displayText;
-                
+
                 if (instructions) {
-                   const instructionText = state.currentIntersection.multipleLocations 
+                   const instructionText = state.currentIntersection.multipleLocations
                        ? 'Click near any intersection of these streets'
                        : 'Click on the map to place your guess';
                    instructions.textContent = instructionText;
                 }
             }
         }
+    } else if (state.gameMode === 'cuesheet') {
+        if (streetInputContainer) streetInputContainer.style.display = 'none';
+        if (intersectionDisplayContainer) intersectionDisplayContainer.style.display = 'none';
+        if (autofillSection) autofillSection.style.display = 'none';
+
+        // Hide sidebar sections not relevant to cuesheet mode
+        if (statsSection) statsSection.style.display = 'none';
+        if (foundItemsSec) foundItemsSec.style.display = 'none';
+
+        setUnfoundStreets(true);
+
+        const cuesheetContainer = document.getElementById('cuesheet-display-container');
+        if (cuesheetContainer) cuesheetContainer.style.display = 'block';
     }
-    
+
+    // Hide cuesheet container when not in cuesheet mode
+    if (state.gameMode !== 'cuesheet') {
+        const cuesheetContainer = document.getElementById('cuesheet-display-container');
+        if (cuesheetContainer) cuesheetContainer.style.display = 'none';
+    }
+
     updateDifficultyVisibility();
 }
 
 export function updateDifficultyVisibility() {
     const difficultyGroup = document.getElementById('difficulty-group');
     if (difficultyGroup) {
-        const shouldShow = state.gameMode === 'intersections' && state.isSettingCenter;
+        const shouldShow = (state.gameMode === 'intersections' || state.gameMode === 'cuesheet') && state.isSettingCenter;
         difficultyGroup.style.display = shouldShow ? 'block' : 'none';
     }
 }

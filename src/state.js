@@ -35,6 +35,16 @@ export const state = {
     undoHistory: [],
     redoHistory: [],
     maxHistorySize: 50,
+
+    // Cuesheet Mode State
+    streetGraph: null,
+    cuesheetChallenge: null,
+    cuesheetCues: [],
+    cuesheetResults: null,
+    _cuesheetCustomPicking: null, // null | 'start' | 'end'
+
+    // OSM Data
+    roundaboutCoords: null, // Set<coordKey> from unnamed roundabout ways
 };
 
 // Simple getters/setters for complex objects if needed, 

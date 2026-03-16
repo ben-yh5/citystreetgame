@@ -206,7 +206,7 @@ export async function fetchStreetsFromOSM(boundaries) {
     bbox.west -= expansion;
     bbox.east += expansion;
     
-    const overpassQuery = `[out:json][timeout:60];(way["highway"~"^(primary|secondary|tertiary|residential|unclassified|trunk|motorway)$"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out geom;`;
+    const overpassQuery = `[out:json][timeout:60];(way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|residential|unclassified)$"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["junction"="roundabout"]["highway"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out geom;`;
     
     try {
         console.log('Making Overpass API request...');
@@ -279,19 +279,39 @@ function processOSMData(osmData, boundaries = null) {
             if (!streetGroups.has(streetName)) streetGroups.set(streetName, []);
             streetGroups.get(streetName).push(segment);
             
-            // NEW: Store detailed segment data for location-specific classification
+            // Store detailed segment data for location-specific classification
             if (!state.streetSegmentsData.has(streetName)) state.streetSegmentsData.set(streetName, []);
+            const oneway = element.tags.oneway === 'yes' || element.tags.oneway === '1'
+                || element.tags.highway === 'motorway' || element.tags.highway === 'motorway_link';
+            const reverseOneway = element.tags.oneway === '-1';
             state.streetSegmentsData.get(streetName).push({
-                coordinates: coordinates,
+                coordinates: reverseOneway ? [...coordinates].reverse() : coordinates,
                 type: segmentType,
                 highway: element.tags.highway,
-                length: length
+                length: length,
+                oneway: oneway || reverseOneway,
             });
         }
     });
-    
 
-    
+    // Collect coordinates from unnamed roundabout ways for graph connectivity
+    const roundaboutCoordKey = (coord) => `${coord[0].toFixed(7)},${coord[1].toFixed(7)}`;
+    const roundaboutCoords = new Set();
+    osmData.elements.forEach(element => {
+        if (element.type === 'way' && element.tags?.junction === 'roundabout' &&
+            !element.tags?.name && element.geometry) {
+            element.geometry.forEach(node => {
+                if (!isNaN(node.lon) && !isNaN(node.lat)) {
+                    roundaboutCoords.add(roundaboutCoordKey([node.lon, node.lat]));
+                }
+            });
+        }
+    });
+    state.roundaboutCoords = roundaboutCoords.size > 0 ? roundaboutCoords : null;
+    if (roundaboutCoords.size > 0) {
+        console.log('Collected', roundaboutCoords.size, 'roundabout coordinates for graph connectivity');
+    }
+
     streetGroups.forEach((segments, streetName) => {
         const totalLength = segments.reduce((sum, seg) => sum + seg.length, 0);
         
@@ -336,8 +356,8 @@ function processOSMData(osmData, boundaries = null) {
 }
 
 export function getStreetType(highway) {
-    if (['motorway', 'trunk', 'primary'].includes(highway)) return 'major';
-    if (['secondary'].includes(highway)) return 'primary';
-    if (['tertiary'].includes(highway)) return 'secondary';
+    if (['motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link'].includes(highway)) return 'major';
+    if (['secondary', 'secondary_link'].includes(highway)) return 'primary';
+    if (['tertiary', 'tertiary_link'].includes(highway)) return 'secondary';
     return 'residential';
 }
