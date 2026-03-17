@@ -619,13 +619,13 @@ input:checked+.slider:before {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 12px;
-    min-width: 380px;
-    padding: 16px 20px;
-    background: rgba(0, 0, 0, 0.85);
+    gap: 10px;
+    padding: 12px 18px;
+    background: rgba(20, 22, 32, 0.95);
     border: 2px solid #00c8ff;
     border-radius: 8px;
     pointer-events: auto;
+    backdrop-filter: blur(10px);
 }
 
 .cuesheet-challenge {
@@ -750,21 +750,36 @@ input:checked+.slider:before {
 
 .cuesheet-list {
     width: 100%;
-    max-height: 200px;
+    flex: 1;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    padding: 5px;
+    margin-bottom: 10px;
 }
 
 .cuesheet-cue-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 5px 8px;
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 4px;
-    font-size: 13px;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 14px;
+    transition: background-color 0.2s;
+}
+
+.cuesheet-cue-row:last-child {
+    border-bottom: none;
+}
+
+.cuesheet-cue-row:hover {
+    background-color: rgba(0, 200, 255, 0.1);
+}
+
+.cuesheet-cue-row.holding {
+    background-color: rgba(0, 200, 255, 0.3);
 }
 
 .cuesheet-cue-row.implicit {
@@ -832,13 +847,24 @@ input:checked+.slider:before {
 }
 
 .cuesheet-actions {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 8px;
     width: 100%;
 }
 
-.cuesheet-actions .submit-button {
-    flex: 1;
+.cuesheet-actions .sidebar-button:first-child {
+    grid-column: 1 / -1;
+}
+
+.sidebar-button.cuesheet-secondary {
+    background: rgba(255, 255, 255, 0.1);
+    color: #aaa;
+}
+
+.sidebar-button.cuesheet-secondary:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
 }
 
 .submit-button.secondary {

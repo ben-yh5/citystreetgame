@@ -2,7 +2,9 @@
  * API client for the Python backend (FastAPI + OSMnx + NetworkX).
  */
 
-const API_BASE = '/api';
+const API_BASE = import.meta.env.VITE_API_URL
+    ? `${import.meta.env.VITE_API_URL}/api`
+    : '/api';
 
 async function post(path, body = {}) {
     const response = await fetch(`${API_BASE}${path}`, {

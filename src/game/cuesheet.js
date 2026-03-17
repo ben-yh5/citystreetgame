@@ -10,6 +10,7 @@ import {
 import { calculateDistanceMeters } from '../utils/geo.js';
 import { normalizeStreetName } from '../utils/string.js';
 import { showMessage, setLoadingState } from './ui.js';
+import { highlightStreet, clearHighlight } from '../map/mapbox.js';
 
 // --- CHALLENGE GENERATION ---
 
@@ -119,6 +120,7 @@ function resetCueInput() {
     const skipBtn = document.getElementById('cuesheet-skip-btn');
     const addBtn = document.getElementById('cuesheet-add-btn');
     const hintBtn = document.getElementById('cuesheet-hint-btn');
+    const customBtn = document.getElementById('cuesheet-custom-btn');
     const cuesheetInput = document.querySelector('.cuesheet-input');
 
     state._selectedDirection = 'L';
@@ -136,9 +138,10 @@ function resetCueInput() {
         submitBtn.textContent = 'Check Route';
         submitBtn.disabled = false;
     }
-    if (skipBtn) skipBtn.style.display = '';
+    if (skipBtn) { skipBtn.textContent = 'Skip'; skipBtn.style.display = ''; }
     if (addBtn) addBtn.style.display = '';
     if (hintBtn) hintBtn.style.display = '';
+    if (customBtn) customBtn.style.display = '';
     if (cuesheetInput) cuesheetInput.style.display = '';
 }
 
@@ -346,6 +349,37 @@ function drawLiveRoute(fitViewport = false) {
 
 // --- CUE LIST RENDERING ---
 
+function _addRowInteraction(row, streetName) {
+    row.addEventListener('mousedown', (e) => {
+        if (e.target.classList.contains('cue-delete-btn')) return;
+        row.classList.add('holding');
+        highlightStreet(streetName);
+    });
+    row.addEventListener('mouseup', () => {
+        row.classList.remove('holding');
+        clearHighlight();
+    });
+    row.addEventListener('mouseleave', () => {
+        row.classList.remove('holding');
+        clearHighlight();
+    });
+    row.addEventListener('dblclick', () => {
+        const features = (state.streetData?.features || []).filter(f => f.properties.name === streetName);
+        if (features.length === 0) return;
+        const bounds = new mapboxgl.LngLatBounds();
+        features.forEach(f => {
+            if (f.geometry.type === 'LineString') {
+                f.geometry.coordinates.forEach(c => bounds.extend(c));
+            } else if (f.geometry.type === 'MultiLineString') {
+                f.geometry.coordinates.forEach(bg => bg.forEach(c => bounds.extend(c)));
+            }
+        });
+        if (!bounds.isEmpty()) {
+            state.map.fitBounds(bounds, { padding: 50, maxZoom: 16, duration: 1000 });
+        }
+    });
+}
+
 function renderCueList() {
     const list = document.getElementById('cuesheet-list');
     if (!list) return;
@@ -368,6 +402,7 @@ function renderCueList() {
         startRow.appendChild(startDir);
         startRow.appendChild(startArrow);
         startRow.appendChild(startName);
+        _addRowInteraction(startRow, state.cuesheetChallenge.startingStreet);
         list.appendChild(startRow);
     }
 
@@ -400,6 +435,7 @@ function renderCueList() {
             row.appendChild(deleteBtn);
         }
 
+        _addRowInteraction(row, cue.streetName);
         list.appendChild(row);
     });
 
@@ -428,6 +464,22 @@ export async function submitCuesheet() {
     };
 
     await showResults();
+}
+
+export function continueEditing() {
+    if (!state.cuesheetResults) return;
+
+    state.cuesheetResults = null;
+
+    // Remove optimal route layer
+    if (state.map) {
+        if (state.map.getLayer('cuesheet-optimal-route')) state.map.removeLayer('cuesheet-optimal-route');
+        if (state.map.getSource('cuesheet-optimal-route')) state.map.removeSource('cuesheet-optimal-route');
+    }
+
+    drawLiveRoute();
+    renderCueList();
+    resetCueInput();
 }
 
 async function showResults() {
@@ -481,11 +533,13 @@ async function showResults() {
     const skipBtn = document.getElementById('cuesheet-skip-btn');
     const addBtn = document.getElementById('cuesheet-add-btn');
     const hintBtn = document.getElementById('cuesheet-hint-btn');
+    const customBtn = document.getElementById('cuesheet-custom-btn');
     const cuesheetInput = document.querySelector('.cuesheet-input');
     if (submitBtn) submitBtn.textContent = 'New Route';
-    if (skipBtn) skipBtn.style.display = 'none';
+    if (skipBtn) { skipBtn.textContent = 'Continue'; skipBtn.style.display = ''; }
     if (addBtn) addBtn.style.display = 'none';
     if (hintBtn) hintBtn.style.display = 'none';
+    if (customBtn) customBtn.style.display = 'none';
     if (cuesheetInput) cuesheetInput.style.display = 'none';
 }
 
@@ -523,6 +577,7 @@ function showOptimalCuesheet(cues, totalDistance) {
         row.appendChild(dirLabel);
         row.appendChild(arrow);
         row.appendChild(name);
+        _addRowInteraction(row, cue.street_name);
         list.appendChild(row);
     });
 

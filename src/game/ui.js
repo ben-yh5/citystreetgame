@@ -94,9 +94,11 @@ export function updateModeUI() {
     const statsSection = document.getElementById('stats-section');
     const foundItemsSec = document.getElementById('found-items-section');
     const mapToolsSection = document.getElementById('map-tools-section');
+    const cuesheetSidebarSection = document.getElementById('cuesheet-sidebar-section');
     if (statsSection) statsSection.style.display = '';
     if (foundItemsSec) foundItemsSec.style.display = '';
     if (mapToolsSection) mapToolsSection.style.display = '';
+    if (cuesheetSidebarSection) cuesheetSidebarSection.style.display = 'none';
 
     if (state.gameMode === 'streets') {
         if (streetInputContainer) streetInputContainer.style.display = 'block';
@@ -155,6 +157,9 @@ export function updateModeUI() {
         // Hide sidebar sections not relevant to cuesheet mode
         if (statsSection) statsSection.style.display = 'none';
         if (foundItemsSec) foundItemsSec.style.display = 'none';
+
+        // Show cuesheet sidebar section
+        if (cuesheetSidebarSection) cuesheetSidebarSection.style.display = 'flex';
 
         setUnfoundStreets(true);
 

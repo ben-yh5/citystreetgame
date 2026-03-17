@@ -12,7 +12,7 @@ import {
 } from './src/game/core.js';
 import { handleStreetInput, filterFoundItems, autofillNumberedStreets } from './src/game/streets.js';
 import { handleMapClick, submitGuess, nextIntersection } from './src/game/intersectionMode.js';
-import { addCue, selectDirection, submitCuesheet, skipChallenge, getHint, generateCuesheetChallenge, handleStreetAutocomplete, handleSuggestionKeydown, hideSuggestions, startCustomRoute, cancelCustomRoute, handleCustomRouteClick } from './src/game/cuesheet.js';
+import { addCue, selectDirection, submitCuesheet, skipChallenge, getHint, generateCuesheetChallenge, handleStreetAutocomplete, handleSuggestionKeydown, hideSuggestions, startCustomRoute, cancelCustomRoute, handleCustomRouteClick, continueEditing } from './src/game/cuesheet.js';
 import { setLoadingState } from './src/game/ui.js';
 import { loadGameState, saveGameState } from './src/cache.js';
 
@@ -195,7 +195,13 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const cuesheetSkipBtn = document.getElementById('cuesheet-skip-btn');
     if (cuesheetSkipBtn) {
-        cuesheetSkipBtn.addEventListener('click', () => skipChallenge());
+        cuesheetSkipBtn.addEventListener('click', () => {
+            if (state.cuesheetResults) {
+                continueEditing();
+            } else {
+                skipChallenge();
+            }
+        });
     }
 
     const cuesheetCustomBtn = document.getElementById('cuesheet-custom-btn');
