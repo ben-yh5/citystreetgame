@@ -1,74 +1,91 @@
 import { state } from '../state.js';
 import {
-    buildStreetGraph,
-    findShortestPath,
-    findClosestNode,
-    getNodeStreetNames,
-    pathToCoordinates,
-    pathToCuesheet,
-    classifyTurn,
-    calculateBearing,
-} from './graph.js';
+    generateChallenge as apiGenerateChallenge,
+    validateCue as apiValidateCue,
+    undoCue as apiUndoCue,
+    getHint as apiGetHint,
+    getOptimalRoute as apiGetOptimalRoute,
+    getClosestNode as apiGetClosestNode,
+} from '../api/backend.js';
 import { calculateDistanceMeters } from '../utils/geo.js';
 import { normalizeStreetName } from '../utils/string.js';
 import { showMessage, setLoadingState } from './ui.js';
 
 // --- CHALLENGE GENERATION ---
 
-export function generateCuesheetChallenge() {
+export async function generateCuesheetChallenge() {
     if (!state.streetData || state.streetData.features.length === 0) {
         updateCuesheetDisplay(null);
         return;
     }
 
-    if (!state.streetGraph) {
-        setLoadingState(true, 'Building street graph...');
-        // Defer to let the loading screen render before CPU-intensive work
-        setTimeout(() => {
-            buildStreetGraph();
-            setLoadingState(false);
-            _pickAndDisplayChallenge();
-        }, 50);
+    if (!state.cityId) {
+        showMessage('City not loaded on backend. Please reload the area.', 'error');
+        updateCuesheetDisplay(null);
         return;
     }
 
-    _pickAndDisplayChallenge();
+    setLoadingState(true, 'Generating route challenge...');
+
+    try {
+        await _pickAndDisplayChallenge();
+    } catch (error) {
+        console.error('Error generating challenge:', error);
+        showMessage('Could not generate a route challenge. Try a different area.', 'error');
+        updateCuesheetDisplay(null);
+    } finally {
+        setLoadingState(false);
+    }
 }
 
-function _pickAndDisplayChallenge(customChallenge = null) {
-    if (!state.streetGraph || state.streetGraph.nodes.size < 2) {
-        showMessage('Not enough intersection data to generate a route challenge.', 'error');
-        updateCuesheetDisplay(null);
-        return;
+async function _pickAndDisplayChallenge(customChallenge = null) {
+    let challengeData;
+
+    if (customChallenge) {
+        challengeData = customChallenge;
+    } else {
+        challengeData = await apiGenerateChallenge(
+            state.cityId, state.intersectionDifficulty
+        );
     }
 
-    const challenge = customChallenge || pickChallengePair();
-    if (!challenge) {
-        showMessage('Could not find a suitable route pair. Try a different area.', 'error');
-        updateCuesheetDisplay(null);
-        return;
-    }
+    const challenge = {
+        startNode: challengeData.start_node.node_id,
+        endNode: challengeData.end_node.node_id,
+        startStreets: challengeData.start_node.streets,
+        endStreets: challengeData.end_node.streets,
+        startLat: challengeData.start_node.lat,
+        startLng: challengeData.start_node.lng,
+        endLat: challengeData.end_node.lat,
+        endLng: challengeData.end_node.lng,
+        startingStreet: challengeData.route.starting_street,
+    };
 
     state.cuesheetChallenge = challenge;
     state.cuesheetCues = [];
     state.cuesheetResults = null;
-    state._cuesheetRoute = null;
+
+    // Store route state from backend
+    const route = challengeData.route;
+    state._cuesheetRouteId = route.route_id;
+    state._cuesheetRouteCoords = route.route_coordinates;
+    state._cuesheetConfirmedCoords = [];
+    state._cuesheetContinuationCoords = route.continuation_coordinates;
+    state._cuesheetConfirmedEdgeCount = route.confirmed_edge_count;
+    state._cuesheetReachedEnd = route.reached_end;
+    state._cuesheetEndCoords = route.end_coordinates;
+    state._cuesheetCurrentStreet = route.starting_street;
 
     cleanupCuesheetMapLayers();
 
-    // Pre-compute the starting street using Dijkstra
-    const initialRoute = initStartingRoute(challenge);
-    if (!initialRoute) {
-        showMessage('Could not determine starting route. Try skipping.', 'error');
-        updateCuesheetDisplay(null);
-        return;
-    }
-    state._cuesheetRoute = initialRoute;
-
     // Insert implicit cues for starting street name changes
-    if (initialRoute.nameChanges && initialRoute.nameChanges.length > 0) {
-        for (const nc of initialRoute.nameChanges) {
-            state.cuesheetCues.push({ direction: 'S', streetName: nc.streetName, implicit: true });
+    if (route.name_changes && route.name_changes.length > 0) {
+        for (const nc of route.name_changes) {
+            state.cuesheetCues.push({
+                direction: 'S',
+                streetName: nc.street_name,
+                implicit: true,
+            });
         }
     }
 
@@ -78,150 +95,6 @@ function _pickAndDisplayChallenge(customChallenge = null) {
 
     addEndpointMarkers(challenge);
     drawLiveRoute(true);
-}
-
-function getStreetCategory(streetName) {
-    const segments = state.streetSegmentsData.get(streetName);
-    if (!segments) return 'local';
-    const isMajor = segments.some(s => ['major', 'primary', 'secondary', 'tertiary'].includes(s.type));
-    return isMajor ? 'major' : 'local';
-}
-
-function nodeMatchesDifficulty(nodeId) {
-    const graph = state.streetGraph;
-    const edges = graph.edges.get(nodeId) || [];
-
-    // Get unique street names and their categories
-    const streetCategories = new Map();
-    edges.forEach(e => {
-        if (!streetCategories.has(e.streetName)) {
-            streetCategories.set(e.streetName, getStreetCategory(e.streetName));
-        }
-    });
-
-    const majorCount = [...streetCategories.values()].filter(c => c === 'major').length;
-
-    switch (state.intersectionDifficulty) {
-        case 'major-major':
-            return majorCount >= 2;
-        case 'major-all':
-            return majorCount >= 1;
-        case 'all-all':
-            return streetCategories.size >= 2;
-        default:
-            return false;
-    }
-}
-
-function pickChallengePair() {
-    const graph = state.streetGraph;
-    const nodeIds = [...graph.nodes.keys()];
-
-    const majorNodes = nodeIds.filter(id => {
-        const edges = graph.edges.get(id) || [];
-        if (edges.length < 2) return false;
-        return nodeMatchesDifficulty(id);
-    });
-
-    if (majorNodes.length < 2) return null;
-
-    for (let attempt = 0; attempt < 50; attempt++) {
-        const i1 = Math.floor(Math.random() * majorNodes.length);
-        let i2 = Math.floor(Math.random() * majorNodes.length);
-        if (i1 === i2) continue;
-
-        const startId = majorNodes[i1];
-        const endId = majorNodes[i2];
-        const startNode = graph.nodes.get(startId);
-        const endNode = graph.nodes.get(endId);
-
-        const path = findShortestPath(startId, endId);
-        if (!path) continue;
-
-        const startStreets = pickDisplayStreets(startId);
-        const endStreets = pickDisplayStreets(endId);
-
-        return {
-            startNode: startId,
-            endNode: endId,
-            startStreets,
-            endStreets,
-            startLat: startNode.lat,
-            startLng: startNode.lng,
-            endLat: endNode.lat,
-            endLng: endNode.lng,
-        };
-    }
-
-    return null;
-}
-
-function pickDisplayStreets(nodeId) {
-    const graph = state.streetGraph;
-    const edges = graph.edges.get(nodeId) || [];
-    const streetEdgeCounts = new Map();
-    edges.forEach(e => {
-        streetEdgeCounts.set(e.streetName, (streetEdgeCounts.get(e.streetName) || 0) + 1);
-    });
-    return [...streetEdgeCounts.entries()]
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 2)
-        .map(([name]) => name);
-}
-
-function initStartingRoute(challenge) {
-    const graph = state.streetGraph;
-    const path = findShortestPath(challenge.startNode, challenge.endNode);
-    if (!path || path.edges.length === 0) return null;
-
-    const startingStreet = path.edges[0].streetName;
-    challenge.startingStreet = startingStreet;
-
-    // Find the edge for this street heading toward destination
-    const nodeEdges = graph.edges.get(challenge.startNode) || [];
-    const endNode = graph.nodes.get(challenge.endNode);
-    const bearingToEnd = calculateBearing(
-        graph.nodes.get(challenge.startNode).lat, graph.nodes.get(challenge.startNode).lng,
-        endNode.lat, endNode.lng
-    );
-
-    const matchingEdges = nodeEdges.filter(e => matchStreetName(startingStreet, e.streetName));
-    if (matchingEdges.length === 0) return null;
-
-    let bestEdge = matchingEdges[0];
-    let bestScore = Infinity;
-    for (const edge of matchingEdges) {
-        let delta = Math.abs(edge.bearing - bearingToEnd);
-        if (delta > 180) delta = 360 - delta;
-        if (delta < bestScore) {
-            bestScore = delta;
-            bestEdge = edge;
-        }
-    }
-
-    const routeEdges = [bestEdge];
-    const continuation = followStreetForward(bestEdge.targetNode, startingStreet, bestEdge.entryBearing);
-    routeEdges.push(...continuation.edges);
-
-    const finalNode = continuation.edges.length > 0
-        ? continuation.edges[continuation.edges.length - 1].targetNode
-        : bestEdge.targetNode;
-    const finalBearing = continuation.edges.length > 0
-        ? continuation.edges[continuation.edges.length - 1].entryBearing
-        : bestEdge.entryBearing;
-    const finalStreet = continuation.streetName;
-
-    const reachedEnd = checkReachedEnd(finalNode, finalStreet, finalBearing, routeEdges);
-
-    return {
-        currentNode: finalNode,
-        currentBearing: finalBearing,
-        currentStreet: finalStreet,
-        edges: routeEdges,
-        reachedEnd: reachedEnd.reached,
-        endEdges: reachedEnd.edges,
-        nameChanges: continuation.nameChanges || [],
-    };
 }
 
 // --- UI ---
@@ -248,7 +121,6 @@ function resetCueInput() {
     const hintBtn = document.getElementById('cuesheet-hint-btn');
     const cuesheetInput = document.querySelector('.cuesheet-input');
 
-    // Always show L/R buttons and default to L
     state._selectedDirection = 'L';
     const btns = document.querySelectorAll('#cuesheet-dir-btns .dir-btn');
     btns.forEach(b => b.classList.toggle('active', b.dataset.dir === 'L'));
@@ -278,552 +150,164 @@ export function selectDirection(dir) {
 
 // --- CUE MANAGEMENT ---
 
-export function addCue() {
+export async function addCue() {
     const streetInput = document.getElementById('cuesheet-street-input');
     if (!streetInput || !state.cuesheetChallenge) return;
 
     const streetName = streetInput.value.trim();
     if (!streetName) return;
 
-    // If results are showing, don't add cues
     if (state.cuesheetResults) return;
 
     const direction = state._selectedDirection || 'L';
 
-    // Try the typed name first, then fall back to first autocomplete suggestion
-    let validation = validateNextCue({ direction, streetName });
-    if (!validation.valid) {
-        const dropdown = document.getElementById('cuesheet-suggestions');
-        const firstSuggestion = dropdown?.querySelector('.cuesheet-suggestion');
-        if (firstSuggestion) {
-            const fallbackName = firstSuggestion.textContent;
-            const fallbackValidation = validateNextCue({ direction, streetName: fallbackName });
-            if (fallbackValidation.valid) {
-                validation = fallbackValidation;
+    // Try the typed name first
+    let result = await _tryValidateCue(direction, streetName);
+
+    // If invalid, try all matching street names (handles variants like
+    // "Eastlake Ave N" vs "Eastlake Ave NE" vs "Eastlake Ave")
+    if (!result.valid) {
+        const candidates = _findMatchingStreetNames(streetName);
+        for (const candidate of candidates) {
+            const candidateResult = await _tryValidateCue(direction, candidate);
+            if (candidateResult.valid) {
+                result = candidateResult;
+                break;
             }
         }
     }
 
-    if (!validation.valid) {
-        showMessage(validation.error, 'error');
+    if (!result.valid) {
+        showMessage(result.error, 'error');
         return;
     }
 
-    // Insert pre-turn implicit cues (name changes on current street before the turn)
-    if (validation.preTurnNameChanges && validation.preTurnNameChanges.length > 0) {
-        for (const nc of validation.preTurnNameChanges) {
-            state.cuesheetCues.push({ direction: 'S', streetName: nc.streetName, implicit: true });
+    // Insert pre-turn implicit cues
+    if (result.pre_turn_name_changes && result.pre_turn_name_changes.length > 0) {
+        for (const nc of result.pre_turn_name_changes) {
+            state.cuesheetCues.push({
+                direction: 'S',
+                streetName: nc.street_name,
+                implicit: true,
+            });
         }
     }
 
-    // Use the actual street name from the graph edge
-    const cue = { direction, streetName: validation.matchedStreetName };
+    // Add the actual cue
+    const cue = { direction, streetName: result.matched_street_name };
     state.cuesheetCues.push(cue);
 
-    // Insert post-turn implicit cues (name changes on new street after the turn)
-    if (validation.postTurnNameChanges && validation.postTurnNameChanges.length > 0) {
-        for (const nc of validation.postTurnNameChanges) {
-            state.cuesheetCues.push({ direction: 'S', streetName: nc.streetName, implicit: true });
+    // Insert post-turn implicit cues
+    if (result.post_turn_name_changes && result.post_turn_name_changes.length > 0) {
+        for (const nc of result.post_turn_name_changes) {
+            state.cuesheetCues.push({
+                direction: 'S',
+                streetName: nc.street_name,
+                implicit: true,
+            });
         }
     }
 
-    // Update the live route state
-    state._cuesheetRoute = validation.route;
+    // Update route rendering state from backend response
+    _updateRouteFromResponse(result);
 
-    // Draw the live route on the map
     drawLiveRoute();
-
     renderCueList();
     resetCueInput();
 
-    // Check if route reached destination
-    if (validation.route.reachedEnd) {
+    if (result.reached_end) {
         showMessage('Route reaches the destination!', 'success');
     }
 }
 
-export function removeCue(index) {
-    state.cuesheetCues.splice(index);  // Remove this cue and everything after it
+function _findMatchingStreetNames(input) {
+    const allNames = state.streetNames || [];
+    const query = input.toLowerCase();
+    const normalizedQuery = normalizeStreetName(query);
 
-    // Rebuild route from scratch with remaining cues
-    rebuildRoute();
+    // Exact normalized equality — same logic as the streets game
+    return allNames.filter(name => {
+        if (name.toLowerCase() === query) return false; // already tried exact
+        return normalizeStreetName(name) === normalizedQuery;
+    });
+}
+
+async function _tryValidateCue(direction, streetName) {
+    try {
+        return await apiValidateCue(state._cuesheetRouteId, direction, streetName);
+    } catch (error) {
+        return { valid: false, error: error.message };
+    }
+}
+
+function _updateRouteFromResponse(response) {
+    state._cuesheetRouteCoords = response.route_coordinates || [];
+    state._cuesheetConfirmedCoords = response.confirmed_coordinates || [];
+    state._cuesheetContinuationCoords = response.continuation_coordinates || [];
+    state._cuesheetConfirmedEdgeCount = response.confirmed_edge_count || 0;
+    state._cuesheetReachedEnd = response.reached_end || false;
+    state._cuesheetEndCoords = response.end_coordinates || [];
+    state._cuesheetCurrentStreet = response.current_street || null;
+}
+
+export async function removeCue(index) {
+    state.cuesheetCues.splice(index);
+
+    // Count explicit cues remaining
+    const explicitCount = state.cuesheetCues.filter(c => !c.implicit).length;
+
+    try {
+        const result = await apiUndoCue(state._cuesheetRouteId, explicitCount);
+
+        // Rebuild cue list from backend response
+        state.cuesheetCues = [];
+
+        // Add initial name changes
+        if (result.name_changes && result.name_changes.length > 0) {
+            for (const nc of result.name_changes) {
+                state.cuesheetCues.push({
+                    direction: 'S',
+                    streetName: nc.street_name,
+                    implicit: true,
+                });
+            }
+        }
+
+        // Replay explicit cues from backend
+        if (result.replayed_cues) {
+            for (const cue of result.replayed_cues) {
+                state.cuesheetCues.push({
+                    direction: cue.direction,
+                    streetName: cue.street_name,
+                });
+            }
+        }
+
+        state._cuesheetRouteCoords = result.route_coordinates || [];
+        state._cuesheetConfirmedCoords = result.confirmed_coordinates || [];
+        state._cuesheetContinuationCoords = result.continuation_coordinates || [];
+        state._cuesheetConfirmedEdgeCount = result.confirmed_edge_count || 0;
+        state._cuesheetReachedEnd = result.reached_end || false;
+        state._cuesheetEndCoords = result.end_coordinates || [];
+        state._cuesheetCurrentStreet = result.current_street || null;
+
+        cleanupCuesheetMapLayers();
+        addEndpointMarkers(state.cuesheetChallenge);
+        drawLiveRoute();
+    } catch (error) {
+        console.error('Error undoing cue:', error);
+        showMessage('Error rebuilding route', 'error');
+    }
+
     renderCueList();
     resetCueInput();
-}
-
-function rebuildRoute() {
-    state._cuesheetRoute = null;
-    cleanupCuesheetMapLayers();
-
-    // Filter out implicit cues — they'll be regenerated during replay
-    const explicitCues = state.cuesheetCues.filter(c => !c.implicit);
-    state.cuesheetCues = [];
-
-    // Restore the initial starting route
-    const challenge = state.cuesheetChallenge;
-    if (!challenge) return;
-
-    const initialRoute = initStartingRoute(challenge);
-    if (!initialRoute) return;
-    state._cuesheetRoute = initialRoute;
-
-    // Insert initial name changes
-    if (initialRoute.nameChanges && initialRoute.nameChanges.length > 0) {
-        for (const nc of initialRoute.nameChanges) {
-            state.cuesheetCues.push({ direction: 'S', streetName: nc.streetName, implicit: true });
-        }
-    }
-
-    // Replay explicit cues, regenerating implicit ones
-    for (let i = 0; i < explicitCues.length; i++) {
-        const cue = explicitCues[i];
-        const validation = validateNextCue(cue);
-        if (!validation.valid) {
-            showMessage(`Removed invalid cues from "${cue.streetName}" onward`, 'error');
-            break;
-        }
-        if (validation.preTurnNameChanges) {
-            for (const nc of validation.preTurnNameChanges) {
-                state.cuesheetCues.push({ direction: 'S', streetName: nc.streetName, implicit: true });
-            }
-        }
-        state.cuesheetCues.push(cue);
-        if (validation.postTurnNameChanges) {
-            for (const nc of validation.postTurnNameChanges) {
-                state.cuesheetCues.push({ direction: 'S', streetName: nc.streetName, implicit: true });
-            }
-        }
-        state._cuesheetRoute = validation.route;
-    }
-
-    addEndpointMarkers(challenge);
-    drawLiveRoute();
-}
-
-// --- LIVE VALIDATION ---
-
-function matchStreetName(inputName, edgeStreetName) {
-    if (inputName.toLowerCase() === edgeStreetName.toLowerCase()) return true;
-    if (normalizeStreetName(inputName) === normalizeStreetName(edgeStreetName)) return true;
-    return false;
-}
-
-// Check for a street name change: the road continues straight but under a different name
-// (e.g., at a bridge or city boundary). Returns the edge if found, null otherwise.
-function findNameChangeEdge(nodeEdges, currentStreetName, currentBearing, visited) {
-    const allForward = nodeEdges.filter(e => {
-        if (visited.has(e.targetNode)) return false;
-        return classifyTurn(currentBearing, e.bearing) === 'S';
-    });
-    // Only treat as name change if exactly one straight-ahead edge and it's a different name
-    if (allForward.length === 1 && !matchStreetName(currentStreetName, allForward[0].streetName)) {
-        return allForward[0];
-    }
-    return null;
-}
-
-// When multiple same-name edges continue forward (parallel roads merging/diverging),
-// pick the one most aligned with our current bearing to stay on the same physical road.
-function pickStraightest(edges, currentBearing) {
-    if (edges.length <= 1) return edges[0] || null;
-    return edges.reduce((best, e) => {
-        let deltaBest = Math.abs(currentBearing - best.bearing);
-        if (deltaBest > 180) deltaBest = 360 - deltaBest;
-        let deltaE = Math.abs(currentBearing - e.bearing);
-        if (deltaE > 180) deltaE = 360 - deltaE;
-        return deltaE < deltaBest ? e : best;
-    });
-}
-
-function validateNextCue(cue) {
-    const graph = state.streetGraph;
-    const challenge = state.cuesheetChallenge;
-    if (!graph || !challenge) return { valid: false, error: 'No challenge active' };
-    if (!state._cuesheetRoute) return { valid: false, error: 'No route state' };
-
-    const currentNode = state._cuesheetRoute.currentNode;
-    const currentBearing = state._cuesheetRoute.currentBearing;
-    const routeEdges = [...state._cuesheetRoute.edges];
-
-    // Search forward along the current street for the target street.
-    // Pass direction so divided streets (separate carriageway nodes) find the correct one.
-    const currentStreet = state._cuesheetRoute.currentStreet;
-    const searchResult = findTurnStreetAhead(currentNode, currentStreet, currentBearing, cue.streetName, cue.direction);
-
-    if (!searchResult) {
-        // Check if the street exists but with wrong direction (for better error message)
-        const anyResult = findTurnStreetAhead(currentNode, currentStreet, currentBearing, cue.streetName);
-        if (anyResult) {
-            const dirName = d => d === 'L' ? 'left' : d === 'R' ? 'right' : d === 'S' ? 'straight' : 'U-turn';
-            const turnEdges = graph.edges.get(anyResult.node) || [];
-            const dirMatches = turnEdges.filter(e => matchStreetName(cue.streetName, e.streetName));
-            const actualDirs = dirMatches.map(e => classifyTurn(anyResult.bearing, e.bearing));
-            const hint = actualDirs.length > 0 ? `(it's ${dirName(actualDirs[0])})` : '';
-            return { valid: false, error: `"${cue.streetName}" is not ${dirName(cue.direction)} ${hint}` };
-        }
-        return { valid: false, error: `"${cue.streetName}" is not reachable along ${currentStreet || 'the current street'}` };
-    }
-
-    // Pre-turn name changes (current street changed names while walking to the turn)
-    const preTurnNameChanges = searchResult.nameChanges || [];
-
-    // Add transit edges (continuing on current street to reach the turn)
-    routeEdges.push(...searchResult.transitEdges);
-
-    const turnNodeEdges = graph.edges.get(searchResult.node) || [];
-    const directMatches = turnNodeEdges.filter(e => matchStreetName(cue.streetName, e.streetName));
-
-    // Check turn direction matches
-    const chosenEdge = pickEdgeByDirection(directMatches, searchResult.bearing, cue.direction);
-    if (!chosenEdge) {
-        const actualDirs = directMatches.map(e => classifyTurn(searchResult.bearing, e.bearing));
-        const dirName = d => d === 'L' ? 'left' : d === 'R' ? 'right' : d === 'S' ? 'straight' : 'U-turn';
-        const playerDir = dirName(cue.direction);
-        const hint = actualDirs.length > 0 ? `(it's ${dirName(actualDirs[0])})` : '';
-        return { valid: false, error: `"${cue.streetName}" is not ${playerDir} ${hint}` };
-    }
-
-    routeEdges.push(chosenEdge);
-
-    const newNode = chosenEdge.targetNode;
-    const newBearing = chosenEdge.entryBearing;
-
-    // Follow the new street forward through intermediate intersections
-    const continuation = followStreetForward(newNode, chosenEdge.streetName, newBearing);
-    routeEdges.push(...continuation.edges);
-
-    // Post-turn name changes (the new street changed names while following forward)
-    const postTurnNameChanges = continuation.nameChanges || [];
-
-    const finalNode = continuation.edges.length > 0
-        ? continuation.edges[continuation.edges.length - 1].targetNode
-        : newNode;
-    const finalBearing = continuation.edges.length > 0
-        ? continuation.edges[continuation.edges.length - 1].entryBearing
-        : newBearing;
-    // Use the street name after any name changes (e.g., bridge transitions)
-    const finalStreet = continuation.streetName;
-
-    const reachedEnd = checkReachedEnd(finalNode, finalStreet, finalBearing, routeEdges);
-
-    return {
-        valid: true,
-        matchedStreetName: chosenEdge.streetName,
-        preTurnNameChanges,
-        postTurnNameChanges,
-        route: {
-            currentNode: finalNode,
-            currentBearing: finalBearing,
-            currentStreet: finalStreet,
-            edges: routeEdges,
-            reachedEnd: reachedEnd.reached,
-            endEdges: reachedEnd.edges,
-        }
-    };
-}
-
-function pickEdgeByDirection(edges, incomingBearing, direction) {
-    if (!direction || !incomingBearing) return edges[0] || null;
-
-    // Score each edge by direction match
-    const scored = [];
-    for (const edge of edges) {
-        const turn = classifyTurn(incomingBearing, edge.bearing);
-        let score = 0;
-
-        if (turn === direction) {
-            score = 100;
-        } else if (direction === 'S' && (turn === 'L' || turn === 'R')) {
-            score = 50;
-        } else if ((direction === 'L' || direction === 'R') && turn === 'S') {
-            // Only accept S as L/R if the edge leans in the requested direction.
-            // Prevents divided streets from matching the wrong carriageway.
-            let delta = edge.bearing - incomingBearing;
-            while (delta > 180) delta -= 360;
-            while (delta < -180) delta += 360;
-            if ((direction === 'L' && delta < 0) || (direction === 'R' && delta > 0)) {
-                score = 50;
-            }
-        }
-
-        if (score > 0) scored.push({ edge, score });
-    }
-
-    if (scored.length === 0) return null;
-    if (scored.length === 1) return scored[0].edge;
-
-    // Multiple matches — prefer highest direction score first
-    scored.sort((a, b) => b.score - a.score);
-    const topScore = scored[0].score;
-    const tied = scored.filter(s => s.score === topScore);
-
-    if (tied.length === 1) return tied[0].edge;
-
-    // Tiebreak: pick the edge leading to the shortest path to destination
-    const endNode = state.cuesheetChallenge?.endNode;
-    if (endNode) {
-        let bestEdge = tied[0].edge;
-        let bestDist = Infinity;
-        for (const { edge } of tied) {
-            const path = findShortestPath(edge.targetNode, endNode);
-            const dist = path ? path.totalDistance : Infinity;
-            if (dist < bestDist) {
-                bestDist = dist;
-                bestEdge = edge;
-            }
-        }
-        return bestEdge;
-    }
-
-    return tied[0].edge;
-}
-
-function findTurnStreetAhead(fromNode, currentStreet, bearing, targetStreet, direction = null) {
-    // Search forward along the current street for an intersection with the target street.
-    // Also follows through street name changes (bridges, boundaries).
-    // If direction is specified, skips nodes where the target street exists but
-    // no edge matches the direction (handles divided streets with separate carriageway nodes).
-    // Returns { node, bearing, transitEdges, nameChanges } or null if not found.
-    const graph = state.streetGraph;
-    let currentNode = fromNode;
-    let currentBearing = bearing;
-    let walkStreet = currentStreet;
-    const visited = new Set([fromNode]);
-    let transitEdges = [];
-    const nameChanges = [];
-    let firstWrongDir = null; // track first occurrence with wrong direction for error messages
-
-    // First check the current node
-    const nodeEdges = graph.edges.get(currentNode) || [];
-    const directMatches = nodeEdges.filter(e => matchStreetName(targetStreet, e.streetName));
-    if (directMatches.length > 0) {
-        if (!direction || pickEdgeByDirection(directMatches, currentBearing, direction)) {
-            return { node: currentNode, bearing: currentBearing, transitEdges: [], nameChanges: [] };
-        }
-        firstWrongDir = { node: currentNode, bearing: currentBearing, transitEdges: [], nameChanges: [] };
-    }
-
-    // Walk forward along the current street, past decision points
-    for (let i = 0; i < 50; i++) {
-        const edges = graph.edges.get(currentNode) || [];
-        let continuations = edges.filter(e => {
-            if (!matchStreetName(walkStreet, e.streetName)) return false;
-            if (visited.has(e.targetNode)) return false;
-            return classifyTurn(currentBearing, e.bearing) !== 'U';
-        });
-
-        // Follow through name changes if no same-name continuation
-        if (continuations.length === 0) {
-            const nameChange = findNameChangeEdge(edges, walkStreet, currentBearing, visited);
-            if (nameChange) {
-                continuations = [nameChange];
-                walkStreet = nameChange.streetName;
-                nameChanges.push({ streetName: nameChange.streetName });
-            } else {
-                break;
-            }
-        }
-
-        const edge = pickStraightest(continuations, currentBearing);
-        transitEdges.push(edge);
-        visited.add(edge.targetNode);
-        currentNode = edge.targetNode;
-        currentBearing = edge.entryBearing;
-
-        // Check if the target street is at this node
-        const nextNodeEdges = graph.edges.get(currentNode) || [];
-        const matches = nextNodeEdges.filter(e => matchStreetName(targetStreet, e.streetName));
-        if (matches.length > 0) {
-            // If direction specified, verify an edge matches before returning.
-            // For divided streets, the wrong carriageway's node is skipped.
-            if (direction) {
-                const dirMatch = pickEdgeByDirection(matches, currentBearing, direction);
-                if (!dirMatch) {
-                    if (!firstWrongDir) {
-                        firstWrongDir = { node: currentNode, bearing: currentBearing, transitEdges: [...transitEdges], nameChanges: [...nameChanges] };
-                    }
-                    continue; // keep walking to find the correct carriageway
-                }
-            }
-            return { node: currentNode, bearing: currentBearing, transitEdges, nameChanges };
-        }
-    }
-
-    return null;
-}
-
-function followStreetForward(fromNodeId, streetName, bearing) {
-    // Follow the street through intermediate intersections where it's the only
-    // continuation (i.e., no choice to be made). Also follows through street
-    // name changes when the road just continues (e.g., "Aurora Ave N" → "Aurora Bridge").
-    // Returns nameChanges array tracking each name transition.
-    const graph = state.streetGraph;
-    const edges = [];
-    let currentNode = fromNodeId;
-    let currentBearing = bearing;
-    let currentStreetName = streetName;
-    const visited = new Set([fromNodeId]);
-    const nameChanges = [];
-
-    for (let i = 0; i < 50; i++) {  // safety limit
-        const nodeEdges = graph.edges.get(currentNode) || [];
-
-        // Find continuations on the same street, going roughly forward
-        let continuations = nodeEdges.filter(e => {
-            if (!matchStreetName(currentStreetName, e.streetName)) return false;
-            if (visited.has(e.targetNode)) return false;
-            return classifyTurn(currentBearing, e.bearing) !== 'U';
-        });
-
-        // If no same-name continuation, check for a name change (road continues
-        // straight under a different name, e.g., at a bridge or city boundary)
-        let isNameChange = false;
-        if (continuations.length === 0) {
-            const nameChange = findNameChangeEdge(nodeEdges, currentStreetName, currentBearing, visited);
-            if (nameChange) {
-                continuations = [nameChange];
-                currentStreetName = nameChange.streetName;
-                nameChanges.push({ streetName: nameChange.streetName });
-                isNameChange = true;
-            } else {
-                break;
-            }
-        }
-
-        // Check if this is a "decision point" — other streets available for turning.
-        // Skip this check for name changes: a name change IS the road continuing,
-        // so other streets branching off shouldn't stop us.
-        if (!isNameChange) {
-            const otherStreets = nodeEdges.filter(e => {
-                if (matchStreetName(currentStreetName, e.streetName)) return false;
-                if (visited.has(e.targetNode)) return false;
-                return classifyTurn(currentBearing, e.bearing) !== 'U';
-            });
-
-            if (otherStreets.length > 0) {
-                break;
-            }
-        }
-
-        const edge = pickStraightest(continuations, currentBearing);
-        edges.push(edge);
-        visited.add(edge.targetNode);
-        currentNode = edge.targetNode;
-        currentBearing = edge.entryBearing;
-
-        // Stop if we've reached the destination
-        if (state.cuesheetChallenge && currentNode === state.cuesheetChallenge.endNode) {
-            break;
-        }
-    }
-
-    return { edges, endNode: currentNode, endBearing: currentBearing, streetName: currentStreetName, nameChanges };
-}
-
-function getFullStreetContinuation(fromNodeId, streetName, bearing) {
-    // Follow the street through ALL nodes (ignoring decision points) for display purposes.
-    // Also follows through name changes (bridges, boundaries).
-    const graph = state.streetGraph;
-    const edges = [];
-    let currentNode = fromNodeId;
-    let currentBearing = bearing;
-    let currentStreetName = streetName;
-    const visited = new Set([fromNodeId]);
-
-    for (let i = 0; i < 100; i++) {
-        const nodeEdges = graph.edges.get(currentNode) || [];
-        let continuations = nodeEdges.filter(e => {
-            if (!matchStreetName(currentStreetName, e.streetName)) return false;
-            if (visited.has(e.targetNode)) return false;
-            return classifyTurn(currentBearing, e.bearing) !== 'U';
-        });
-
-        if (continuations.length === 0) {
-            const nameChange = findNameChangeEdge(nodeEdges, currentStreetName, currentBearing, visited);
-            if (nameChange) {
-                continuations = [nameChange];
-                currentStreetName = nameChange.streetName;
-            } else {
-                break;
-            }
-        }
-
-        const edge = pickStraightest(continuations, currentBearing);
-        edges.push(edge);
-        visited.add(edge.targetNode);
-        currentNode = edge.targetNode;
-        currentBearing = edge.entryBearing;
-    }
-
-    return edges;
-}
-
-function checkReachedEnd(currentNode, currentStreet, bearing, routeEdges) {
-    // Check if the end node is reachable by continuing on the current street
-    const graph = state.streetGraph;
-    const endNodeId = state.cuesheetChallenge.endNode;
-
-    if (currentNode === endNodeId) {
-        return { reached: true, edges: [] };
-    }
-
-    // Try following the current street to see if we pass through the end node
-    const visited = new Set();
-    // Add all nodes already in the route to avoid backtracking
-    routeEdges.forEach(e => visited.add(e.targetNode));
-    // But allow the end node
-    visited.delete(endNodeId);
-    visited.delete(currentNode);
-
-    const queue = [{ nodeId: currentNode, bearing, edges: [], street: currentStreet }];
-    const queueVisited = new Set([currentNode]);
-
-    while (queue.length > 0) {
-        const { nodeId, bearing: curBearing, edges, street } = queue.shift();
-
-        if (nodeId === endNodeId && nodeId !== currentNode) {
-            return { reached: true, edges };
-        }
-
-        if (edges.length > 100) continue;
-
-        const nodeEdges = graph.edges.get(nodeId) || [];
-        let continuations = nodeEdges.filter(e => {
-            if (!matchStreetName(street, e.streetName)) return false;
-            if (queueVisited.has(e.targetNode)) return false;
-            return classifyTurn(curBearing, e.bearing) !== 'U';
-        });
-
-        // Follow through name changes
-        let nextStreet = street;
-        if (continuations.length === 0) {
-            const nameChange = findNameChangeEdge(nodeEdges, street, curBearing, queueVisited);
-            if (nameChange) {
-                continuations = [nameChange];
-                nextStreet = nameChange.streetName;
-            }
-        }
-
-        for (const edge of continuations) {
-            queueVisited.add(edge.targetNode);
-            queue.push({
-                nodeId: edge.targetNode,
-                bearing: edge.entryBearing,
-                edges: [...edges, edge],
-                street: nextStreet
-            });
-        }
-    }
-
-    return { reached: false, edges: [] };
 }
 
 // --- LIVE ROUTE DRAWING ---
 
 function drawLiveRoute(fitViewport = false) {
-    const route = state._cuesheetRoute;
     const challenge = state.cuesheetChallenge;
-    if (!route || !challenge) return;
+    if (!challenge) return;
 
     // Remove previous route layers (but keep endpoint markers)
     ['cuesheet-player-route', 'cuesheet-continuation', 'cuesheet-optimal-route'].forEach(id => {
@@ -831,66 +315,33 @@ function drawLiveRoute(fitViewport = false) {
         if (state.map.getSource(id)) state.map.removeSource(id);
     });
 
-    // Draw the confirmed route (solid green)
-    const routeCoords = edgesToCoords(route.edges);
-    if (routeCoords.length >= 2) {
-        addRouteLayer('cuesheet-player-route', routeCoords, '#00ff88', 4, false);
+    // Draw confirmed route (solid green)
+    const confirmedCoords = state._cuesheetConfirmedCoords;
+    if (confirmedCoords && confirmedCoords.length >= 2) {
+        addRouteLayer('cuesheet-player-route', confirmedCoords, '#00ff88', 4, false);
     }
 
-    if (route.reachedEnd && route.endEdges && route.endEdges.length > 0) {
-        // Draw continuation to end as solid green too
-        const endCoords = edgesToCoords(route.endEdges);
-        if (endCoords.length >= 2) {
-            // Prepend the current position for continuity
-            const lastRouteCoord = routeCoords.length > 0 ? routeCoords[routeCoords.length - 1] : null;
-            const fullEndCoords = lastRouteCoord ? [lastRouteCoord, ...endCoords] : endCoords;
-            addRouteLayer('cuesheet-continuation', deduplicateCoords(fullEndCoords), '#00ff88', 4, true);
-        }
-    } else {
-        // Draw dashed continuation showing where current street goes (full extent)
-        const contEdges = getFullStreetContinuation(route.currentNode, route.currentStreet, route.currentBearing);
-        if (contEdges.length > 0) {
-            const contCoords = edgesToCoords(contEdges);
-            if (contCoords.length >= 2) {
-                addRouteLayer('cuesheet-continuation', contCoords, '#00ff88', 3, true);
-            }
-        }
+    // Draw continuation (dashed green)
+    const contCoords = state._cuesheetContinuationCoords;
+    if (contCoords && contCoords.length >= 2) {
+        addRouteLayer('cuesheet-continuation', contCoords, '#00ff88', 3, true);
+    } else if (state._cuesheetRouteCoords && state._cuesheetRouteCoords.length >= 2
+               && (!confirmedCoords || confirmedCoords.length < 2)) {
+        // If no confirmed yet, draw the whole route as dashed
+        addRouteLayer('cuesheet-continuation', state._cuesheetRouteCoords, '#00ff88', 3, true);
     }
 
-    // Only fit viewport on initial challenge load
+    // Fit viewport on initial challenge load
     if (fitViewport) {
+        const allCoords = state._cuesheetRouteCoords || [];
         const bounds = new mapboxgl.LngLatBounds();
-        routeCoords.forEach(c => bounds.extend(c));
+        allCoords.forEach(c => bounds.extend(c));
         bounds.extend([challenge.startLng, challenge.startLat]);
         bounds.extend([challenge.endLng, challenge.endLat]);
         if (!bounds.isEmpty()) {
             state.map.fitBounds(bounds, { padding: 80, duration: 500, maxZoom: 16 });
         }
     }
-}
-
-function edgesToCoords(edges) {
-    const coords = [];
-    edges.forEach((edge, i) => {
-        if (i === 0) {
-            coords.push(...edge.coordinates);
-        } else {
-            coords.push(...edge.coordinates.slice(1));
-        }
-    });
-    return deduplicateCoords(coords);
-}
-
-function deduplicateCoords(coords) {
-    if (coords.length === 0) return coords;
-    const result = [coords[0]];
-    for (let i = 1; i < coords.length; i++) {
-        const prev = result[result.length - 1];
-        if (coords[i][0] !== prev[0] || coords[i][1] !== prev[1]) {
-            result.push(coords[i]);
-        }
-    }
-    return result;
 }
 
 // --- CUE LIST RENDERING ---
@@ -901,7 +352,7 @@ function renderCueList() {
 
     list.innerHTML = '';
 
-    // Show the pre-loaded starting street as a static first row
+    // Starting street row
     if (state.cuesheetChallenge && state.cuesheetChallenge.startingStreet) {
         const startRow = document.createElement('div');
         startRow.className = 'cuesheet-cue-row starting';
@@ -957,7 +408,7 @@ function renderCueList() {
 
 // --- SUBMIT / RESULTS ---
 
-export function submitCuesheet() {
+export async function submitCuesheet() {
     // If showing results, act as "New Route"
     if (state.cuesheetResults) {
         state.cuesheetResults = null;
@@ -970,26 +421,18 @@ export function submitCuesheet() {
         return;
     }
 
-    const route = state._cuesheetRoute;
-    if (!route) {
-        showMessage('No valid route to submit.', 'error');
-        return;
-    }
+    state.cuesheetResults = {
+        reachedEnd: state._cuesheetReachedEnd,
+        routeCoords: state._cuesheetRouteCoords,
+        endCoords: state._cuesheetEndCoords,
+    };
 
-    state.cuesheetResults = route;
-    showResults(route);
+    await showResults();
 }
 
-function showResults(route) {
+async function showResults() {
     const challenge = state.cuesheetChallenge;
-
-    // Show the full player route (including continuation to end if reached)
-    let allEdges = [...route.edges];
-    if (route.reachedEnd && route.endEdges) {
-        allEdges.push(...route.endEdges);
-    }
-    const playerCoords = edgesToCoords(allEdges);
-    const playerDistance = allEdges.reduce((sum, e) => sum + e.distance, 0);
+    const results = state.cuesheetResults;
 
     // Clear live route and redraw as final
     ['cuesheet-player-route', 'cuesheet-continuation'].forEach(id => {
@@ -997,32 +440,43 @@ function showResults(route) {
         if (state.map.getSource(id)) state.map.removeSource(id);
     });
 
-    const playerColor = route.reachedEnd ? '#00ff88' : '#ff6464';
+    // Draw player route
+    let playerCoords = results.routeCoords || [];
+    if (results.reachedEnd && results.endCoords && results.endCoords.length > 0) {
+        playerCoords = [...playerCoords, ...results.endCoords];
+    }
+    const playerColor = results.reachedEnd ? '#00ff88' : '#ff6464';
     if (playerCoords.length >= 2) {
         addRouteLayer('cuesheet-player-route', playerCoords, playerColor, 5, false);
     }
 
-    // Show Dijkstra optimal
-    const optimal = findShortestPath(challenge.startNode, challenge.endNode);
-    if (optimal) {
-        const optimalCoords = pathToCoordinates(optimal.edges);
-        if (optimalCoords.length >= 2) {
-            addRouteLayer('cuesheet-optimal-route', optimalCoords, '#00c8ff', 3, true);
+    // Fetch and show optimal route from backend
+    try {
+        const optimal = await apiGetOptimalRoute(
+            state.cityId, challenge.startNode, challenge.endNode
+        );
+
+        if (optimal && optimal.coordinates.length >= 2) {
+            addRouteLayer('cuesheet-optimal-route', optimal.coordinates, '#00c8ff', 3, true);
+            showOptimalCuesheet(optimal.cues, optimal.total_distance);
         }
 
-        const optimalCues = pathToCuesheet(optimal.edges);
-        showOptimalCuesheet(optimalCues, optimal.totalDistance);
+        if (results.reachedEnd) {
+            const optimalKm = (optimal.total_distance / 1000).toFixed(1);
+            showMessage(`Valid route! Shortest: ${optimalKm} km`, 'success');
+        } else {
+            showMessage('Route does not reach the destination', 'error');
+        }
+    } catch (error) {
+        console.error('Error fetching optimal route:', error);
+        if (results.reachedEnd) {
+            showMessage('Valid route!', 'success');
+        } else {
+            showMessage('Route does not reach the destination', 'error');
+        }
     }
 
-    if (route.reachedEnd) {
-        const playerKm = (playerDistance / 1000).toFixed(1);
-        const optimalKm = optimal ? (optimal.totalDistance / 1000).toFixed(1) : '?';
-        showMessage(`Valid route! Your path: ${playerKm} km | Shortest: ${optimalKm} km`, 'success');
-    } else {
-        showMessage('Route does not reach the destination', 'error');
-    }
-
-    // Update buttons — hide input row, show New Route
+    // Update buttons
     const submitBtn = document.getElementById('cuesheet-submit-btn');
     const skipBtn = document.getElementById('cuesheet-skip-btn');
     const addBtn = document.getElementById('cuesheet-add-btn');
@@ -1064,7 +518,7 @@ function showOptimalCuesheet(cues, totalDistance) {
 
         const name = document.createElement('span');
         name.className = 'cue-street-name';
-        name.textContent = cue.streetName;
+        name.textContent = cue.street_name;
 
         row.appendChild(dirLabel);
         row.appendChild(arrow);
@@ -1136,28 +590,24 @@ export function cleanupCuesheetMapLayers() {
     }
 }
 
-export function skipChallenge() {
+export async function skipChallenge() {
     cleanupCuesheetMapLayers();
     generateCuesheetChallenge();
 }
 
 // --- CUSTOM ROUTE PICKING ---
 
-export function startCustomRoute() {
+export async function startCustomRoute() {
     if (!state.streetData || state.streetData.features.length === 0) {
         showMessage('Load a city first.', 'error');
         return;
     }
 
-    if (!state.streetGraph) {
-        setLoadingState(true, 'Building street graph...');
-        setTimeout(() => {
-            buildStreetGraph();
-            setLoadingState(false);
-            _enterPickingMode();
-        }, 50);
+    if (!state.cityId) {
+        showMessage('City not loaded on backend. Please reload the area.', 'error');
         return;
     }
+
     _enterPickingMode();
 }
 
@@ -1166,7 +616,7 @@ function _enterPickingMode() {
     state.cuesheetChallenge = null;
     state.cuesheetCues = [];
     state.cuesheetResults = null;
-    state._cuesheetRoute = null;
+    state._cuesheetRouteId = null;
 
     state._cuesheetCustomPicking = 'start';
 
@@ -1175,7 +625,6 @@ function _enterPickingMode() {
     if (fromEl) fromEl.textContent = 'Click map to set start';
     if (toEl) toEl.textContent = '';
 
-    // Hide cue input controls during picking
     const cuesheetInput = document.querySelector('.cuesheet-input');
     if (cuesheetInput) cuesheetInput.style.display = 'none';
     const cuesheetList = document.getElementById('cuesheet-list');
@@ -1187,93 +636,83 @@ function _enterPickingMode() {
     if (state.map) state.map.getCanvas().style.cursor = 'crosshair';
 }
 
-export function handleCustomRouteClick(lngLat) {
+export async function handleCustomRouteClick(lngLat) {
     if (!state._cuesheetCustomPicking) return false;
 
-    const graph = state.streetGraph;
-    if (!graph) return false;
+    if (!state.cityId) return false;
 
-    const nodeId = findClosestNode(lngLat.lat, lngLat.lng);
-    if (!nodeId) {
-        showMessage('No intersection found nearby.', 'error');
-        return true;
-    }
+    try {
+        const nodeInfo = await apiGetClosestNode(state.cityId, lngLat.lat, lngLat.lng);
+        const dist = calculateDistanceMeters(lngLat.lat, lngLat.lng, nodeInfo.lat, nodeInfo.lng);
 
-    const node = graph.nodes.get(nodeId);
-    const dist = calculateDistanceMeters(lngLat.lat, lngLat.lng, node.lat, node.lng);
-    if (dist > 500) {
-        showMessage('No intersection found nearby. Try closer to a street.', 'error');
-        return true;
-    }
-
-    if (state._cuesheetCustomPicking === 'start') {
-        // Place start marker
-        if (state._cuesheetMarkers) {
-            state._cuesheetMarkers.forEach(m => m.remove());
-        }
-        const marker = new mapboxgl.Marker({ color: '#00ff88' })
-            .setLngLat([node.lng, node.lat])
-            .addTo(state.map);
-        state._cuesheetMarkers = [marker];
-
-        state._cuesheetCustomStart = { nodeId, lat: node.lat, lng: node.lng };
-        state._cuesheetCustomPicking = 'end';
-
-        const fromEl = document.getElementById('cuesheet-from');
-        const toEl = document.getElementById('cuesheet-to');
-        const streets = getNodeStreetNames(nodeId);
-        if (fromEl) fromEl.textContent = streets.slice(0, 2).join(' & ') || 'Start';
-        if (toEl) toEl.textContent = 'Click map to set end';
-
-        return true;
-    }
-
-    if (state._cuesheetCustomPicking === 'end') {
-        if (nodeId === state._cuesheetCustomStart.nodeId) {
-            showMessage('End must be different from start.', 'error');
+        if (dist > 500) {
+            showMessage('No intersection found nearby. Try closer to a street.', 'error');
             return true;
         }
 
-        // Validate path exists
-        const path = findShortestPath(state._cuesheetCustomStart.nodeId, nodeId);
-        if (!path) {
-            showMessage('No path between these points. Try different locations.', 'error');
+        if (state._cuesheetCustomPicking === 'start') {
+            if (state._cuesheetMarkers) {
+                state._cuesheetMarkers.forEach(m => m.remove());
+            }
+            const marker = new mapboxgl.Marker({ color: '#00ff88' })
+                .setLngLat([nodeInfo.lng, nodeInfo.lat])
+                .addTo(state.map);
+            state._cuesheetMarkers = [marker];
+
+            state._cuesheetCustomStart = nodeInfo;
+            state._cuesheetCustomPicking = 'end';
+
+            const fromEl = document.getElementById('cuesheet-from');
+            const toEl = document.getElementById('cuesheet-to');
+            if (fromEl) fromEl.textContent = nodeInfo.streets.slice(0, 2).join(' & ') || 'Start';
+            if (toEl) toEl.textContent = 'Click map to set end';
+
             return true;
         }
 
-        // Build challenge object
-        const startNode = graph.nodes.get(state._cuesheetCustomStart.nodeId);
-        const endNode = graph.nodes.get(nodeId);
-        const challenge = {
-            startNode: state._cuesheetCustomStart.nodeId,
-            endNode: nodeId,
-            startStreets: pickDisplayStreets(state._cuesheetCustomStart.nodeId),
-            endStreets: pickDisplayStreets(nodeId),
-            startLat: startNode.lat,
-            startLng: startNode.lng,
-            endLat: endNode.lat,
-            endLng: endNode.lng,
-        };
+        if (state._cuesheetCustomPicking === 'end') {
+            if (nodeInfo.node_id === state._cuesheetCustomStart.node_id) {
+                showMessage('End must be different from start.', 'error');
+                return true;
+            }
 
-        // Exit picking mode
-        state._cuesheetCustomPicking = null;
-        if (state.map) state.map.getCanvas().style.cursor = '';
+            // Exit picking mode
+            state._cuesheetCustomPicking = null;
+            if (state.map) state.map.getCanvas().style.cursor = '';
 
-        // Remove picking markers (replaced by challenge markers)
-        if (state._cuesheetMarkers) {
-            state._cuesheetMarkers.forEach(m => m.remove());
-            state._cuesheetMarkers = null;
+            if (state._cuesheetMarkers) {
+                state._cuesheetMarkers.forEach(m => m.remove());
+                state._cuesheetMarkers = null;
+            }
+
+            const customBtn = document.getElementById('cuesheet-custom-btn');
+            if (customBtn) customBtn.textContent = 'Custom';
+
+            const cuesheetInput = document.querySelector('.cuesheet-input');
+            if (cuesheetInput) cuesheetInput.style.display = '';
+
+            // Generate challenge via backend with specific start/end nodes
+            setLoadingState(true, 'Setting up custom route...');
+            try {
+                const customChallengeData = await apiGenerateChallenge(
+                    state.cityId,
+                    state.intersectionDifficulty,
+                    state._cuesheetCustomStart.node_id,
+                    nodeInfo.node_id
+                );
+                await _pickAndDisplayChallenge(customChallengeData);
+            } catch (error) {
+                console.error('Error setting up custom route:', error);
+                showMessage('Error setting up custom route. Try again.', 'error');
+            } finally {
+                setLoadingState(false);
+            }
+
+            return true;
         }
-
-        const customBtn = document.getElementById('cuesheet-custom-btn');
-        if (customBtn) customBtn.textContent = 'Custom';
-
-        // Restore cue input controls
-        const cuesheetInput = document.querySelector('.cuesheet-input');
-        if (cuesheetInput) cuesheetInput.style.display = '';
-
-        _pickAndDisplayChallenge(challenge);
-        return true;
+    } catch (error) {
+        console.error('Error during custom route click:', error);
+        showMessage('Error finding intersection.', 'error');
     }
 
     return false;
@@ -1293,141 +732,77 @@ export function cancelCustomRoute() {
     const customBtn = document.getElementById('cuesheet-custom-btn');
     if (customBtn) customBtn.textContent = 'Custom';
 
-    // Restore cue input controls
     const cuesheetInput = document.querySelector('.cuesheet-input');
     if (cuesheetInput) cuesheetInput.style.display = '';
 
     generateCuesheetChallenge();
 }
 
-export function getHint() {
-    if (!state.cuesheetChallenge || state.cuesheetResults || !state._cuesheetRoute) return;
+export async function getHint() {
+    if (!state.cuesheetChallenge || state.cuesheetResults || !state._cuesheetRouteId) return;
 
-    const challenge = state.cuesheetChallenge;
-    const route = state._cuesheetRoute;
-    const graph = state.streetGraph;
-
-    if (route.reachedEnd) {
+    if (state._cuesheetReachedEnd) {
         showMessage('Route already reaches the destination — submit it!', 'success');
         return;
     }
 
-    // Use Dijkstra to find the optimal path, then extract the next turn from it.
-    // This is more accurate than the greedy candidate approach, especially for
-    // divided streets where wrong-carriageway edges could lead to detours.
-    const path = findShortestPath(route.currentNode, challenge.endNode);
-    if (!path || path.edges.length === 0) {
-        showMessage('No path to destination found.', 'error');
-        return;
-    }
+    try {
+        const result = await apiGetHint(state._cuesheetRouteId);
 
-    // Walk the Dijkstra path to find the first real turn (not a name change)
-    let walkStreet = route.currentStreet;
-    let prevBearing = route.currentBearing;
-
-    for (let i = 0; i < path.edges.length; i++) {
-        const edge = path.edges[i];
-
-        if (matchStreetName(walkStreet, edge.streetName)) {
-            // Still on the same street — keep walking
-            prevBearing = edge.entryBearing;
-            continue;
+        if (result.message) {
+            showMessage(result.message, 'info');
+            return;
         }
 
-        // Different street name. Is this a name change or a real turn?
-        const turnDir = classifyTurn(prevBearing, edge.bearing);
-
-        if (turnDir === 'S') {
-            // Straight continuation with different name — check if it's a name change.
-            // It's a name change if the current street has no same-name forward continuation.
-            const turnNode = i > 0 ? path.edges[i - 1].targetNode : route.currentNode;
-            const nodeEdges = graph.edges.get(turnNode) || [];
-            const traversed = new Set();
-            for (let j = 0; j < i; j++) traversed.add(path.edges[j].targetNode);
-            const sameNameForward = nodeEdges.filter(e =>
-                matchStreetName(walkStreet, e.streetName) &&
-                !traversed.has(e.targetNode) &&
-                classifyTurn(prevBearing, e.bearing) !== 'U'
-            );
-            if (sameNameForward.length === 0) {
-                // Name change — implicit cues handle this, skip
-                walkStreet = edge.streetName;
-                prevBearing = edge.entryBearing;
-                continue;
-            }
-        }
-
-        if (turnDir === 'U') {
-            // Dijkstra wants a U-turn — can't express as a cue, skip
-            prevBearing = edge.entryBearing;
-            walkStreet = edge.streetName;
-            continue;
-        }
-
-        // Real turn — construct cue and validate
-        const cue = { direction: turnDir, streetName: edge.streetName };
-        const validation = validateNextCue(cue);
-
-        if (validation.valid) {
-            if (validation.preTurnNameChanges) {
-                for (const nc of validation.preTurnNameChanges) {
-                    state.cuesheetCues.push({ direction: 'S', streetName: nc.streetName, implicit: true });
+        if (result.valid && result.cue) {
+            // Add pre-turn name changes
+            if (result.pre_turn_name_changes) {
+                for (const nc of result.pre_turn_name_changes) {
+                    state.cuesheetCues.push({
+                        direction: 'S',
+                        streetName: nc.street_name,
+                        implicit: true,
+                    });
                 }
             }
-            state.cuesheetCues.push(cue);
-            if (validation.postTurnNameChanges) {
-                for (const nc of validation.postTurnNameChanges) {
-                    state.cuesheetCues.push({ direction: 'S', streetName: nc.streetName, implicit: true });
+
+            // Add the hint cue
+            state.cuesheetCues.push({
+                direction: result.cue.direction,
+                streetName: result.cue.street_name,
+            });
+
+            // Add post-turn name changes
+            if (result.post_turn_name_changes) {
+                for (const nc of result.post_turn_name_changes) {
+                    state.cuesheetCues.push({
+                        direction: 'S',
+                        streetName: nc.street_name,
+                        implicit: true,
+                    });
                 }
             }
-            state._cuesheetRoute = validation.route;
+
+            // Update route rendering state
+            _updateRouteFromResponse(result);
+
             drawLiveRoute();
             renderCueList();
             resetCueInput();
 
-            if (validation.route.reachedEnd) {
+            if (result.reached_end) {
                 showMessage('Route reaches the destination!', 'success');
             }
-            return;
         }
-        // Validation failed for this turn — try continuing along Dijkstra path
-        // (might happen if validation system can't reproduce the exact Dijkstra edge)
-        break;
+    } catch (error) {
+        console.error('Error getting hint:', error);
+        showMessage('Error getting hint', 'error');
     }
-
-    // No turn found in Dijkstra path — destination is reachable via name changes
-    // on the current street. Auto-complete the route with the Dijkstra path edges.
-    const reachedEnd = checkReachedEnd(route.currentNode, route.currentStreet, route.currentBearing, route.edges);
-    if (reachedEnd.reached) {
-        state._cuesheetRoute = {
-            ...route,
-            reachedEnd: true,
-            endEdges: reachedEnd.edges,
-        };
-        drawLiveRoute();
-        renderCueList();
-        showMessage('Route reaches the destination!', 'success');
-        return;
-    }
-
-    showMessage('Keep following ' + (route.currentStreet || 'the current street'), 'info');
 }
 
 // --- STREET AUTOCOMPLETE ---
 
-let _allStreetNames = null; // cached sorted array
-let _activeIndex = -1;      // keyboard nav index
-
-function getAllStreetNames() {
-    if (_allStreetNames && _allStreetNames._forData === state.streetSegmentsData) {
-        return _allStreetNames;
-    }
-    if (!state.streetSegmentsData) return [];
-    const names = [...state.streetSegmentsData.keys()].sort((a, b) => a.localeCompare(b));
-    names._forData = state.streetSegmentsData;
-    _allStreetNames = names;
-    return names;
-}
+let _activeIndex = -1;
 
 export function handleStreetAutocomplete() {
     const input = document.getElementById('cuesheet-street-input');
@@ -1441,8 +816,13 @@ export function handleStreetAutocomplete() {
         return;
     }
 
-    const allNames = getAllStreetNames();
-    const matches = allNames.filter(name => name.toLowerCase().includes(query)).slice(0, 8);
+    // Use street names from backend (stored in state)
+    const allNames = state.streetNames || [];
+    const normalizedQuery = normalizeStreetName(query);
+    const matches = allNames.filter(name =>
+        name.toLowerCase().includes(query) ||
+        normalizeStreetName(name) === normalizedQuery
+    ).slice(0, 8);
 
     if (matches.length === 0) {
         dropdown.style.display = 'none';
@@ -1452,12 +832,12 @@ export function handleStreetAutocomplete() {
 
     _activeIndex = -1;
     dropdown.innerHTML = '';
-    matches.forEach((name, i) => {
+    matches.forEach((name) => {
         const div = document.createElement('div');
         div.className = 'cuesheet-suggestion';
         div.textContent = name;
         div.addEventListener('mousedown', (e) => {
-            e.preventDefault(); // prevent blur
+            e.preventDefault();
             input.value = name;
             dropdown.style.display = 'none';
             _activeIndex = -1;

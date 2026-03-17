@@ -1,11 +1,10 @@
 import { state } from '../state.js';
-import { generateRandomIntersection } from './intersections.js';
 import { updateStats, showAccuracyFeedback } from './ui.js';
 import { calculateDistanceMeters } from '../utils/geo.js';
 import { saveGameState } from '../cache.js';
+import { generateIntersectionChallenge } from '../api/backend.js';
 
-export function nextIntersection() {
-    state.currentIntersection = generateRandomIntersection();
+export async function nextIntersection() {
     state.hasPlacedGuess = false;
 
     if (state.userGuessMarker) {
@@ -17,36 +16,59 @@ export function nextIntersection() {
     const instructions = document.querySelector('.intersection-instructions');
     const targetIntersection = document.getElementById('target-intersection');
 
-    if (state.currentIntersection) {
+    if (!state.streetData || state.streetData.features.length === 0 || !state.cityId) {
+        state.currentIntersection = null;
         if (targetIntersection) {
-            let displayText = `${state.currentIntersection.street1} & ${state.currentIntersection.street2}`;
-            if (state.currentIntersection.multipleLocations) {
-                displayText += ` (${state.currentIntersection.locationCount} locations)`;
+            targetIntersection.textContent = 'Click "Configure" to load a city first';
+        }
+        if (submitBtn) submitBtn.style.display = 'none';
+        if (instructions) {
+            instructions.textContent = 'Load an area to start finding intersections';
+        }
+        return;
+    }
+
+    try {
+        const result = await generateIntersectionChallenge(
+            state.cityId, state.intersectionDifficulty
+        );
+
+        state.currentIntersection = {
+            street1: result.street1,
+            street2: result.street2,
+            type1: result.type1,
+            type2: result.type2,
+            lat: result.locations[0].lat,
+            lng: result.locations[0].lng,
+            multipleLocations: result.multiple_locations,
+            locationCount: result.location_count,
+        };
+
+        state.validIntersectionLocations = result.locations;
+
+        if (targetIntersection) {
+            let displayText = `${result.street1} & ${result.street2}`;
+            if (result.multiple_locations) {
+                displayText += ` (${result.location_count} locations)`;
             }
             targetIntersection.textContent = displayText;
         }
         if (submitBtn) submitBtn.style.display = 'none';
         if (instructions) {
-            const instructionText = state.currentIntersection.multipleLocations
+            const instructionText = result.multiple_locations
                 ? 'Click near any intersection of these streets'
                 : 'Click on the map to place your guess';
             instructions.textContent = instructionText;
         }
-    } else {
+    } catch (error) {
+        console.error('Error generating intersection challenge:', error);
+        state.currentIntersection = null;
         if (targetIntersection) {
-            if (!state.streetData || state.streetData.features.length === 0) {
-                targetIntersection.textContent = 'Click "Configure" to load a city first';
-            } else {
-                targetIntersection.textContent = 'No more intersections available!';
-            }
+            targetIntersection.textContent = 'No more intersections available!';
         }
         if (submitBtn) submitBtn.style.display = 'none';
         if (instructions) {
-            if (!state.streetData || state.streetData.features.length === 0) {
-                instructions.textContent = 'Load an area to start finding intersections';
-            } else {
-                instructions.textContent = 'Try changing difficulty or loading a different area';
-            }
+            instructions.textContent = 'Try changing difficulty or loading a different area';
         }
     }
 }

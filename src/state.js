@@ -2,7 +2,7 @@
 export const state = {
     // Mapbox
     map: null,
-    
+
     // Game Data
     cityBoundaries: null,
     streetData: null,
@@ -10,7 +10,11 @@ export const state = {
     foundStreets: new Set(),
     foundIntersections: new Set(),
     totalLength: 0,
-    
+
+    // Backend
+    cityId: null, // backend session identifier for loaded city
+    streetNames: [], // sorted list of all street names (from backend)
+
     // Game Config
     GAME_CENTER: [-122.3321, 47.6062], // Seattle [lng, lat]
     isSettingCenter: false,
@@ -18,7 +22,7 @@ export const state = {
     previewCity: null,
     gameMode: 'streets', // 'streets' or 'intersections'
     intersectionDifficulty: 'major-major', // 'major-major', 'major-all', 'all-all'
-    
+
     // Intersection Mode State
     currentIntersection: null,
     intersectionScore: 0,
@@ -26,26 +30,27 @@ export const state = {
     userGuessMarker: null,
     hasPlacedGuess: false,
     validIntersectionLocations: [],
-    
+
     // UI State
     highlightedStreet: null,
     streetTooltip: null,
-    
+
     // Undo/Redo
     undoHistory: [],
     redoHistory: [],
     maxHistorySize: 50,
 
     // Cuesheet Mode State
-    streetGraph: null,
     cuesheetChallenge: null,
     cuesheetCues: [],
     cuesheetResults: null,
     _cuesheetCustomPicking: null, // null | 'start' | 'end'
-
-    // OSM Data
-    roundaboutCoords: null, // Set<coordKey> from unnamed roundabout ways
+    _cuesheetRouteId: null, // backend route ID
+    _cuesheetRouteCoords: [], // coordinates for drawing the route
+    _cuesheetConfirmedCoords: [], // confirmed portion coordinates
+    _cuesheetContinuationCoords: [], // dashed preview coordinates
+    _cuesheetEndCoords: [], // end segment coordinates
+    _cuesheetReachedEnd: false,
+    _cuesheetConfirmedEdgeCount: 0,
+    _cuesheetCurrentStreet: null,
 };
-
-// Simple getters/setters for complex objects if needed, 
-// or just export the state object directly for now.

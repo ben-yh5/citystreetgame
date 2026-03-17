@@ -17,6 +17,7 @@ import {
     getCityBoundaries,
     searchCities,
 } from '../api/osm.js';
+import { loadCity as backendLoadCity } from '../api/backend.js';
 import {
     calculateBoundariesCenter,
     getLargestPolygon,
@@ -33,12 +34,6 @@ export function switchGameMode(newMode) {
     updateModeUI();
 
     if (state.streetData) {
-        if (state.gameMode === 'intersections') {
-            nextIntersection();
-        } else if (state.gameMode === 'cuesheet') {
-            generateCuesheetChallenge();
-        }
-        updateStats();
         resetGame(false);
     }
     saveGameState();
@@ -69,7 +64,14 @@ export function resetGame(fullReload = true) {
     state.cuesheetCues = [];
     state.cuesheetResults = null;
     state.cuesheetChallenge = null;
-    state._cuesheetRoute = null;
+    state._cuesheetRouteId = null;
+    state._cuesheetRouteCoords = [];
+    state._cuesheetConfirmedCoords = [];
+    state._cuesheetContinuationCoords = [];
+    state._cuesheetEndCoords = [];
+    state._cuesheetReachedEnd = false;
+    state._cuesheetConfirmedEdgeCount = 0;
+    state._cuesheetCurrentStreet = null;
     const cuesheetList = document.getElementById('cuesheet-list');
     if (cuesheetList) cuesheetList.innerHTML = '';
 
@@ -164,19 +166,10 @@ export async function loadStreetsForCity(boundaries, lat, lng) {
     try {
         state.streetData = await fetchStreetsFromOSM(boundaries);
         state.totalLength = state.streetData.features.reduce((sum, f) => sum + f.properties.length, 0);
-        // Invalidate graph when new city loaded
-        state.streetGraph = null;
 
         setupCityMapLayers(boundaries, lat, lng);
 
-        if (state.gameMode === 'intersections') {
-            nextIntersection();
-        } else if (state.gameMode === 'cuesheet') {
-            generateCuesheetChallenge();
-        }
-
         resetGame(false);
-        updateStats();
 
         const streetInput = document.getElementById('street-input');
         const resetBtn = document.getElementById('reset-btn');
@@ -463,22 +456,43 @@ export function restoreGame(data) {
     state.intersectionDifficulty = data.intersectionDifficulty || 'major-major';
     state.cityBoundaries = data.cityBoundaries;
     state.currentCenter = data.currentCenter;
-    state.streetData = data.streetData;
+    state.streetData = data.streetData || null;
     state.totalLength = data.totalLength || 0;
     state.foundStreets = new Set(data.foundStreets || []);
     state.foundIntersections = new Set(data.foundIntersections || []);
     state.intersectionScore = data.intersectionScore || 0;
     state.intersectionAccuracy = data.intersectionAccuracy || [];
+    state.cityId = data.cityId || null;
 
-    rebuildStreetSegmentsData();
+    if (state.streetData) {
+        rebuildStreetSegmentsData();
+        state.streetNames = state.streetData.features
+            .map(f => f.properties.name)
+            .sort((a, b) => a.localeCompare(b));
+    }
 
     const gameModeSelect = document.getElementById('game-mode-select');
     if (gameModeSelect) gameModeSelect.value = state.gameMode;
     const difficultySelect = document.getElementById('difficulty-select');
     if (difficultySelect) difficultySelect.value = state.intersectionDifficulty;
 
-    const restoreLayers = () => {
-        if (!state.streetData || !state.cityBoundaries) return;
+    const restoreLayers = async () => {
+        if (!state.cityBoundaries) return;
+
+        // Reload street data + graph from backend (street data no longer cached in localStorage)
+        try {
+            const result = await backendLoadCity(state.cityBoundaries);
+            state.cityId = result.city_id;
+            state.streetData = result.street_data;
+            state.streetNames = result.street_names;
+            state.totalLength = result.street_data.features.reduce(
+                (sum, f) => sum + f.properties.length, 0
+            );
+            rebuildStreetSegmentsData();
+        } catch (e) {
+            console.warn('Failed to reload from backend on restore:', e.message);
+            if (!state.streetData) return;
+        }
 
         setupCityMapLayers(state.cityBoundaries, state.currentCenter[1], state.currentCenter[0]);
 
