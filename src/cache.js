@@ -7,10 +7,10 @@ export function saveGameState() {
         if (!state.streetData) return;
 
         const data = {
-            v: 1,
+            v: 3,
+            cityId: state.cityId,
             cityBoundaries: state.cityBoundaries,
             currentCenter: state.currentCenter,
-            streetData: state.streetData,
             totalLength: state.totalLength,
             gameMode: state.gameMode,
             intersectionDifficulty: state.intersectionDifficulty,
@@ -32,7 +32,7 @@ export function loadGameState() {
         if (!raw) return null;
 
         const data = JSON.parse(raw);
-        if (!data || data.v !== 1) return null;
+        if (!data || ![1, 2, 3].includes(data.v)) return null;
 
         return data;
     } catch (e) {

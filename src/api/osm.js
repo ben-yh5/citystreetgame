@@ -1,5 +1,5 @@
-import { getLargestPolygon, pointInPolygon, calculateLineStringLength } from '../utils/geo.js';
 import { state } from '../state.js';
+import { loadCity as backendLoadCity } from './backend.js';
 
 export const FALLBACK_SEATTLE = {
     name: 'Seattle',
@@ -12,18 +12,18 @@ export const FALLBACK_SEATTLE = {
 
 export async function searchCities(query) {
     if (!query || query.length < 2) return [];
-    
+
     try {
         const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&addressdetails=1&limit=8`);
         const results = await response.json();
-        
+
         return results.filter(result => {
-            return result.osm_type && result.osm_id && 
-                   (result.class === 'place' || 
+            return result.osm_type && result.osm_id &&
+                   (result.class === 'place' ||
                     result.class === 'boundary' ||
                     result.class === 'admin' ||
-                    ['city', 'town', 'village', 'municipality', 'neighbourhood', 
-                     'suburb', 'quarter', 'district', 'borough', 'ward', 'subdivision', 
+                    ['city', 'town', 'village', 'municipality', 'neighbourhood',
+                     'suburb', 'quarter', 'district', 'borough', 'ward', 'subdivision',
                      'hamlet', 'locality', 'county', 'state_district'].includes(result.type));
         }).map(result => ({
             name: result.display_name.split(',')[0],
@@ -47,10 +47,10 @@ export async function getCityBoundaries(osmType, osmId, cityData = null) {
     try {
         const response = await fetch(`https://nominatim.openstreetmap.org/lookup?format=json&osm_ids=${osmType[0].toUpperCase()}${osmId}&polygon_geojson=1`);
         const results = await response.json();
-        
+
         if (results.length > 0 && results[0].geojson) {
             const geojson = results[0].geojson;
-            
+
             if (isValidBoundary(geojson)) {
                 console.log('Found valid official boundaries for', cityData?.name || 'location');
                 return geojson;
@@ -60,11 +60,11 @@ export async function getCityBoundaries(osmType, osmId, cityData = null) {
         } else {
             console.log('No boundary data returned from API for', cityData?.name || 'location');
         }
-        
+
         if (cityData) {
             return createFallbackBoundary(cityData);
         }
-        
+
         return null;
     } catch (error) {
         console.error('Error fetching city boundaries:', error);
@@ -78,10 +78,10 @@ export async function getCityBoundaries(osmType, osmId, cityData = null) {
 
 export function isValidBoundary(geojson) {
     if (!geojson || !geojson.type) return false;
-    
+
     try {
         let coordinates;
-        
+
         if (geojson.type === 'Polygon') {
             coordinates = geojson.coordinates;
         } else if (geojson.type === 'MultiPolygon') {
@@ -90,39 +90,39 @@ export function isValidBoundary(geojson) {
             console.log('Boundary type not supported:', geojson.type);
             return false;
         }
-        
+
         if (!coordinates || coordinates.length === 0) {
             console.log('No coordinates in boundary data');
             return false;
         }
-        
+
         let ring;
         if (geojson.type === 'Polygon') {
             ring = coordinates[0];
         } else if (geojson.type === 'MultiPolygon') {
             ring = coordinates[0] && coordinates[0][0];
         }
-        
+
         if (!ring || ring.length < 4) {
             console.log('Boundary ring has insufficient points:', ring?.length || 0);
             return false;
         }
-        
-        const hasValidCoords = ring.some(coord => 
-            Array.isArray(coord) && 
-            coord.length >= 2 && 
-            Math.abs(coord[0]) > 0.001 && 
+
+        const hasValidCoords = ring.some(coord =>
+            Array.isArray(coord) &&
+            coord.length >= 2 &&
+            Math.abs(coord[0]) > 0.001 &&
             Math.abs(coord[1]) > 0.001
         );
-        
+
         if (!hasValidCoords) {
             console.log('Boundary coordinates appear to be invalid or all zeros');
             return false;
         }
-        
+
         console.log('Boundary validation passed - found valid boundary with', ring.length, 'points');
         return true;
-        
+
     } catch (error) {
         console.error('Error validating boundary:', error);
         return false;
@@ -133,7 +133,7 @@ export function createFallbackBoundary(cityData) {
     const lat = cityData.lat;
     const lon = cityData.lon;
     let latOffset, lonOffset;
-    
+
     switch (cityData.placeType) {
         case 'city':
         case 'town':
@@ -169,9 +169,9 @@ export function createFallbackBoundary(cityData) {
             latOffset = 0.04;
             lonOffset = 0.04;
     }
-    
+
     console.log(`Creating ${cityData.placeType} boundary for ${cityData.name} with size ${latOffset}°×${lonOffset}°`);
-    
+
     return {
         type: 'Polygon',
         coordinates: [[
@@ -184,160 +184,66 @@ export function createFallbackBoundary(cityData) {
     };
 }
 
+/**
+ * Fetch streets from the Python backend using OSMnx.
+ * Replaces the old Overpass API call.
+ */
 export async function fetchStreetsFromOSM(boundaries) {
-    const mainBoundary = getLargestPolygon(boundaries);
-    if (!mainBoundary) return { type: 'FeatureCollection', features: [] };
-    
-    const coords = mainBoundary.coordinates[0];
-    if (coords.length === 0) return { type: 'FeatureCollection', features: [] };
-    
-    const lats = coords.map(c => c[1]);
-    const lngs = coords.map(c => c[0]);
-    const bbox = {
-        south: Math.min(...lats),
-        west: Math.min(...lngs),
-        north: Math.max(...lats),
-        east: Math.max(...lngs)
-    };
-    
-    const expansion = 0.02;
-    bbox.south -= expansion;
-    bbox.north += expansion;
-    bbox.west -= expansion;
-    bbox.east += expansion;
-    
-    const overpassQuery = `[out:json][timeout:60];(way["highway"~"^(primary|secondary|tertiary|residential|unclassified|trunk|motorway)$"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out geom;`;
-    
-    try {
-        console.log('Making Overpass API request...');
-        const response = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: overpassQuery });
-        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-        const osmData = await response.json();
-        
-        console.log('Overpass API returned', osmData.elements?.length || 0, 'street elements');
-        
-        return processOSMData(osmData, mainBoundary);
-    } catch (error) { 
-        console.error('Error fetching OSM data:', error); 
-        throw error; 
-    }
+    console.log('Loading city via OSMnx backend...');
+    const result = await backendLoadCity(boundaries);
+
+    // Store backend data in state
+    state.cityId = result.city_id;
+    state.streetNames = result.street_names;
+    state.streetSegmentsData = rebuildSegmentsFromGeoJSON(result.street_data);
+
+    console.log(`OSMnx loaded: ${result.graph_stats.nodes} nodes, ${result.graph_stats.edges} edges, ${result.street_names.length} streets`);
+
+    return result.street_data;
 }
 
-function processOSMData(osmData, boundaries = null) {
-    const features = []; 
-    const streetGroups = new Map();
-    state.streetSegmentsData = new Map(); // Initialize detailed segment data in state
-    let totalStreets = 0;
-    let filteredStreets = 0;
-    let boundaryRejected = 0;
-    
-    if (!osmData.elements) {
-        return { type: 'FeatureCollection', features: [] };
-    }
-    
-    osmData.elements.forEach(element => {
-        if (element.type === 'way' && element.tags?.name && element.geometry) {
-            totalStreets++;
-            const streetName = element.tags.name;
-            const coordinates = element.geometry.map(node => [node.lon, node.lat]).filter(c => !isNaN(c[0]) && !isNaN(c[1]));
-            if (coordinates.length < 2) return;
-            
-            if (boundaries) {
-                const checkPoints = [];
-                
-                for (let i = 0; i < coordinates.length; i += Math.max(1, Math.floor(coordinates.length / 5))) {
-                    checkPoints.push(coordinates[i]);
-                }
-                checkPoints.push(coordinates[coordinates.length - 1]);
-                
-                let pointsInBoundary = 0;
-                for (const point of checkPoints) {
-                    if (pointInPolygon(point, boundaries)) {
-                        pointsInBoundary++;
-                    }
-                }
-                
-                if (pointsInBoundary === 0) {
-                    boundaryRejected++;
-                    return;
-                }
-            }
-            
-            filteredStreets++;
-            const length = calculateLineStringLength(coordinates);
-            if (isNaN(length) || length <= 0) return;
-            
-            const segmentType = getStreetType(element.tags.highway);
-            const segment = { 
-                coordinates, 
-                length, 
-                type: segmentType, 
-                highway: element.tags.highway 
-            };
-            
-            // Store in both the grouped data (for features) and detailed segment data
-            if (!streetGroups.has(streetName)) streetGroups.set(streetName, []);
-            streetGroups.get(streetName).push(segment);
-            
-            // NEW: Store detailed segment data for location-specific classification
-            if (!state.streetSegmentsData.has(streetName)) state.streetSegmentsData.set(streetName, []);
-            state.streetSegmentsData.get(streetName).push({
-                coordinates: coordinates,
-                type: segmentType,
-                highway: element.tags.highway,
-                length: length
+/**
+ * Rebuild streetSegmentsData Map from the GeoJSON FeatureCollection.
+ * This is needed by intersections mode and streets mode for local lookups.
+ */
+function rebuildSegmentsFromGeoJSON(streetData) {
+    const segmentsData = new Map();
+    if (!streetData || !streetData.features) return segmentsData;
+
+    streetData.features.forEach(feature => {
+        const name = feature.properties.name;
+        const type = feature.properties.type;
+        const highway = feature.properties.highway;
+        const segments = [];
+
+        if (feature.geometry.type === 'LineString') {
+            segments.push({
+                coordinates: feature.geometry.coordinates,
+                type,
+                highway,
+                length: feature.properties.length,
+            });
+        } else if (feature.geometry.type === 'MultiLineString') {
+            const segCount = feature.geometry.coordinates.length;
+            feature.geometry.coordinates.forEach(coords => {
+                segments.push({
+                    coordinates: coords,
+                    type,
+                    highway,
+                    length: feature.properties.length / segCount,
+                });
             });
         }
-    });
-    
 
-    
-    streetGroups.forEach((segments, streetName) => {
-        const totalLength = segments.reduce((sum, seg) => sum + seg.length, 0);
-        
-        // Get the highest classification among all segments of this street
-        const streetTypes = segments.map(seg => seg.type);
-        const typeHierarchy = ['major', 'primary', 'secondary', 'tertiary', 'residential'];
-        let highestType = 'residential';
-        
-        streetTypes.forEach(type => {
-            const currentIndex = typeHierarchy.indexOf(type);
-            const highestIndex = typeHierarchy.indexOf(highestType);
-            if (currentIndex < highestIndex) { // Lower index = higher priority
-                highestType = type;
-            }
-        });
-        
-        const properties = { 
-            name: streetName, 
-            type: highestType,  // Use the highest classification for overall feature
-            length: totalLength, 
-            highway: segments[0].highway,
-            segments: segments.length  // Track how many segments this street has
-        };
-        
-        const geometry = segments.length === 1 ? 
-            { type: 'LineString', coordinates: segments[0].coordinates } : 
-            { type: 'MultiLineString', coordinates: segments.map(s => s.coordinates) };
-            
-        features.push({ type: 'Feature', properties, geometry });
+        segmentsData.set(name, segments);
     });
-    
-    // Log some stats about street classifications
-    const typeStats = {};
-    features.forEach(f => {
-        const type = f.properties.type;
-        typeStats[type] = (typeStats[type] || 0) + 1;
-    });
-    console.log('Street type distribution:', typeStats);
-    console.log('Detailed segment data stored for', state.streetSegmentsData.size, 'streets');
-    
-    return { type: 'FeatureCollection', features };
+
+    return segmentsData;
 }
 
 export function getStreetType(highway) {
-    if (['motorway', 'trunk', 'primary'].includes(highway)) return 'major';
-    if (['secondary'].includes(highway)) return 'primary';
-    if (['tertiary'].includes(highway)) return 'secondary';
+    if (['motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link'].includes(highway)) return 'major';
+    if (['secondary', 'secondary_link'].includes(highway)) return 'primary';
+    if (['tertiary', 'tertiary_link'].includes(highway)) return 'secondary';
     return 'residential';
 }

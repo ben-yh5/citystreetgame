@@ -613,6 +613,280 @@ input:checked+.slider:before {
     margin-top: 2px;
 }
 
+/* --- Cuesheet Mode --- */
+
+.cuesheet-display {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 18px;
+    background: rgba(20, 22, 32, 0.95);
+    border: 2px solid #00c8ff;
+    border-radius: 8px;
+    pointer-events: auto;
+    backdrop-filter: blur(10px);
+}
+
+.cuesheet-challenge {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 15px;
+    font-weight: bold;
+    color: white;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.cuesheet-from {
+    color: #00ff88;
+}
+
+.cuesheet-arrow {
+    color: #888;
+    font-size: 18px;
+}
+
+.cuesheet-to {
+    color: #ff6464;
+}
+
+.cuesheet-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.cuesheet-direction-btns {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.cue-add-btn {
+    margin-top: 0;
+    padding: 6px 12px;
+    flex-shrink: 0;
+}
+
+
+.dir-btn {
+    width: 34px;
+    height: 34px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.05);
+    color: #aaa;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.15s;
+    padding: 0;
+}
+
+.dir-btn:hover {
+    border-color: #00c8ff;
+    color: white;
+}
+
+.dir-btn.active {
+    background: rgba(0, 200, 255, 0.2);
+    border-color: #00c8ff;
+    color: #00c8ff;
+}
+
+.cuesheet-input-wrapper {
+    flex: 1;
+    position: relative;
+}
+
+.cuesheet-street-input {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    color: white;
+    font-size: 14px;
+    outline: none;
+    font-family: monospace;
+    box-sizing: border-box;
+}
+
+.cuesheet-street-input:focus {
+    border-color: #00c8ff;
+}
+
+.cuesheet-suggestions {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: #1a1d29;
+    border: 1px solid #00c8ff44;
+    border-top: none;
+    border-radius: 0 0 4px 4px;
+    max-height: 160px;
+    overflow-y: auto;
+    z-index: 1000;
+    display: none;
+}
+
+.cuesheet-suggestion {
+    padding: 6px 12px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #ccc;
+    font-family: monospace;
+}
+
+.cuesheet-suggestion:hover,
+.cuesheet-suggestion.active {
+    background: rgba(0, 200, 255, 0.15);
+    color: white;
+}
+
+.cuesheet-list {
+    width: 100%;
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    padding: 5px;
+    margin-bottom: 10px;
+}
+
+.cuesheet-cue-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    font-size: 14px;
+    transition: background-color 0.2s;
+}
+
+.cuesheet-cue-row:last-child {
+    border-bottom: none;
+}
+
+.cuesheet-cue-row:hover {
+    background-color: rgba(0, 200, 255, 0.1);
+}
+
+.cuesheet-cue-row.holding {
+    background-color: rgba(0, 200, 255, 0.3);
+}
+
+.cuesheet-cue-row.implicit {
+    opacity: 0.55;
+    font-style: italic;
+}
+
+.cuesheet-cue-row.optimal {
+    background: rgba(0, 200, 255, 0.08);
+    border-left: 2px solid #00c8ff;
+}
+
+.cue-direction {
+    font-weight: bold;
+    font-size: 12px;
+    width: 36px;
+    text-align: center;
+    padding: 2px 4px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+
+.cue-start {
+    color: #00ff88;
+    background: rgba(0, 255, 136, 0.1);
+}
+
+.cue-l {
+    color: #ffaa00;
+    background: rgba(255, 170, 0, 0.1);
+}
+
+.cue-s {
+    color: #aaa;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.cue-r {
+    color: #ff6464;
+    background: rgba(255, 100, 100, 0.1);
+}
+
+.cue-arrow {
+    color: #555;
+    font-size: 12px;
+}
+
+.cue-street-name {
+    color: white;
+    flex: 1;
+}
+
+.cue-delete-btn {
+    background: none;
+    border: none;
+    color: #666;
+    font-size: 16px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+.cue-delete-btn:hover {
+    color: #ff6464;
+}
+
+.cuesheet-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    width: 100%;
+}
+
+.cuesheet-actions .sidebar-button:first-child {
+    grid-column: 1 / -1;
+}
+
+.sidebar-button.cuesheet-secondary {
+    background: rgba(255, 255, 255, 0.1);
+    color: #aaa;
+}
+
+.sidebar-button.cuesheet-secondary:hover {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+}
+
+.submit-button.secondary {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: #555;
+    color: #aaa;
+}
+
+.submit-button.secondary:hover {
+    border-color: #888;
+    color: white;
+}
+
+.cuesheet-divider {
+    color: #00c8ff;
+    font-size: 12px;
+    font-weight: bold;
+    padding: 8px 0 4px;
+    border-top: 1px solid rgba(0, 200, 255, 0.2);
+    margin-top: 4px;
+}
+
 /* --- Street Name Tooltip --- */
 .street-tooltip {
     position: absolute;

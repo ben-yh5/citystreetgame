@@ -17,12 +17,13 @@
                 <select id="game-mode-select" class="form-input">
                     <option value="streets">name streets</option>
                     <option value="intersections">find intersections</option>
+                    <option value="cuesheet">navigate route</option>
                 </select>
             </div>
         </div>
 
         <!-- Stats Panel -->
-        <div class="sidebar-section">
+        <div class="sidebar-section" id="stats-section">
             <div class="stats-panel">
                 <div class="score-display">
                     <span class="score-number" id="score">0.00%</span>
@@ -50,7 +51,7 @@
         </div>
 
         <!-- Found Items List (context-dependent) -->
-        <div class="sidebar-section" style="flex: 1; display: flex; flex-direction: column;">
+        <div class="sidebar-section" id="found-items-section" style="flex: 1; display: flex; flex-direction: column;">
             <h3 id="found-list-title">Found Streets</h3>
             <div class="search-container">
                 <input type="text" id="item-search" class="search-input" placeholder="Search found items...">
@@ -59,8 +60,20 @@
             </div>
         </div>
         
+        <!-- Cuesheet Mode: Route Cues (sidebar) -->
+        <div class="sidebar-section" id="cuesheet-sidebar-section" style="flex: 1; display: none; flex-direction: column;">
+            <h3>Route Cues</h3>
+            <div id="cuesheet-list" class="cuesheet-list"></div>
+            <div class="cuesheet-actions">
+                <button id="cuesheet-submit-btn" class="sidebar-button">Check Route</button>
+                <button id="cuesheet-hint-btn" class="sidebar-button cuesheet-secondary">Hint</button>
+                <button id="cuesheet-skip-btn" class="sidebar-button cuesheet-secondary">Skip</button>
+                <button id="cuesheet-custom-btn" class="sidebar-button cuesheet-secondary">Custom</button>
+            </div>
+        </div>
+
         <!-- Map Tools -->
-        <div class="sidebar-section">
+        <div class="sidebar-section" id="map-tools-section">
             <h3>Map Tools</h3>
             <div class="form-group switch-container">
                 <label for="show-unfound-toggle">Show Unfound Streets</label>
@@ -99,7 +112,7 @@
             
             <!-- Intersection Mode: Difficulty Selector -->
             <div class="form-group" id="difficulty-group" style="display: none;">
-                <label for="difficulty-select">Intersection Difficulty</label>
+                <label for="difficulty-select">Difficulty</label>
                 <select id="difficulty-select" class="form-input">
                     <option value="major-major">Major Roads Only</option>
                     <option value="major-all">Major + Local</option>
@@ -145,6 +158,29 @@
                 </div>
             </div>
             
+            <!-- Cuesheet Mode Display (compact overlay) -->
+            <div class="input-container" id="cuesheet-display-container" style="display: none;">
+                <div class="cuesheet-display">
+                    <div class="cuesheet-challenge">
+                        <span class="cuesheet-from" id="cuesheet-from"></span>
+                        <span class="cuesheet-arrow">&rarr;</span>
+                        <span class="cuesheet-to" id="cuesheet-to"></span>
+                    </div>
+                    <div class="cuesheet-input">
+                        <div class="cuesheet-direction-btns" id="cuesheet-dir-btns">
+                            <button class="dir-btn" data-dir="L">L</button>
+                            <button class="dir-btn" data-dir="S">S</button>
+                            <button class="dir-btn" data-dir="R">R</button>
+                        </div>
+                        <div class="cuesheet-input-wrapper">
+                            <input type="text" id="cuesheet-street-input" class="cuesheet-street-input" placeholder="Street name..." autocomplete="off">
+                            <div id="cuesheet-suggestions" class="cuesheet-suggestions"></div>
+                        </div>
+                        <button id="cuesheet-add-btn" class="submit-button cue-add-btn">Add</button>
+                    </div>
+                </div>
+            </div>
+
             <div id="message" class="message"></div>
             <div id="street-tooltip" class="street-tooltip" style="display: none;"></div>
             
