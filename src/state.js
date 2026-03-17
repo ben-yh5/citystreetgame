@@ -11,10 +11,6 @@ export const state = {
     foundIntersections: new Set(),
     totalLength: 0,
 
-    // Backend
-    cityId: null, // backend session identifier for loaded city
-    streetNames: [], // sorted list of all street names (from backend)
-
     // Game Config
     GAME_CENTER: [-122.3321, 47.6062], // Seattle [lng, lat]
     isSettingCenter: false,
@@ -41,16 +37,12 @@ export const state = {
     maxHistorySize: 50,
 
     // Cuesheet Mode State
+    streetGraph: null,
     cuesheetChallenge: null,
     cuesheetCues: [],
     cuesheetResults: null,
     _cuesheetCustomPicking: null, // null | 'start' | 'end'
-    _cuesheetRouteId: null, // backend route ID
-    _cuesheetRouteCoords: [], // coordinates for drawing the route
-    _cuesheetConfirmedCoords: [], // confirmed portion coordinates
-    _cuesheetContinuationCoords: [], // dashed preview coordinates
-    _cuesheetEndCoords: [], // end segment coordinates
-    _cuesheetReachedEnd: false,
-    _cuesheetConfirmedEdgeCount: 0,
-    _cuesheetCurrentStreet: null,
+
+    // OSM Data
+    roundaboutCoords: null, // Set<coordKey> from unnamed roundabout ways
 };

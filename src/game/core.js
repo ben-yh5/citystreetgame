@@ -17,7 +17,6 @@ import {
     getCityBoundaries,
     searchCities,
 } from '../api/osm.js';
-import { loadCity as backendLoadCity } from '../api/backend.js';
 import {
     calculateBoundariesCenter,
     getLargestPolygon,
@@ -64,14 +63,7 @@ export function resetGame(fullReload = true) {
     state.cuesheetCues = [];
     state.cuesheetResults = null;
     state.cuesheetChallenge = null;
-    state._cuesheetRouteId = null;
-    state._cuesheetRouteCoords = [];
-    state._cuesheetConfirmedCoords = [];
-    state._cuesheetContinuationCoords = [];
-    state._cuesheetEndCoords = [];
-    state._cuesheetReachedEnd = false;
-    state._cuesheetConfirmedEdgeCount = 0;
-    state._cuesheetCurrentStreet = null;
+    state._cuesheetRoute = null;
     const cuesheetList = document.getElementById('cuesheet-list');
     if (cuesheetList) cuesheetList.innerHTML = '';
 
@@ -165,6 +157,7 @@ export async function loadStreetsForCity(boundaries, lat, lng) {
 
     try {
         state.streetData = await fetchStreetsFromOSM(boundaries);
+        state.streetGraph = null;
         state.totalLength = state.streetData.features.reduce((sum, f) => sum + f.properties.length, 0);
 
         setupCityMapLayers(boundaries, lat, lng);
@@ -462,13 +455,8 @@ export function restoreGame(data) {
     state.foundIntersections = new Set(data.foundIntersections || []);
     state.intersectionScore = data.intersectionScore || 0;
     state.intersectionAccuracy = data.intersectionAccuracy || [];
-    state.cityId = data.cityId || null;
-
     if (state.streetData) {
         rebuildStreetSegmentsData();
-        state.streetNames = state.streetData.features
-            .map(f => f.properties.name)
-            .sort((a, b) => a.localeCompare(b));
     }
 
     const gameModeSelect = document.getElementById('game-mode-select');
@@ -476,23 +464,8 @@ export function restoreGame(data) {
     const difficultySelect = document.getElementById('difficulty-select');
     if (difficultySelect) difficultySelect.value = state.intersectionDifficulty;
 
-    const restoreLayers = async () => {
-        if (!state.cityBoundaries) return;
-
-        // Reload street data + graph from backend (street data no longer cached in localStorage)
-        try {
-            const result = await backendLoadCity(state.cityBoundaries);
-            state.cityId = result.city_id;
-            state.streetData = result.street_data;
-            state.streetNames = result.street_names;
-            state.totalLength = result.street_data.features.reduce(
-                (sum, f) => sum + f.properties.length, 0
-            );
-            rebuildStreetSegmentsData();
-        } catch (e) {
-            console.warn('Failed to reload from backend on restore:', e.message);
-            if (!state.streetData) return;
-        }
+    const restoreLayers = () => {
+        if (!state.cityBoundaries || !state.streetData) return;
 
         setupCityMapLayers(state.cityBoundaries, state.currentCenter[1], state.currentCenter[0]);
 
