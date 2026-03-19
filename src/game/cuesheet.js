@@ -10,7 +10,7 @@ import {
     calculateBearing,
 } from './graph.js';
 import { calculateDistanceMeters } from '../utils/geo.js';
-import { normalizeStreetName } from '../utils/string.js';
+import { normalizeStreetName, abbreviateStreetName } from '../utils/string.js';
 import { showMessage, setLoadingState } from './ui.js';
 import { highlightStreet, clearHighlight } from '../map/mapbox.js';
 
@@ -391,7 +391,7 @@ function rebuildRoute() {
 
 function matchStreetName(inputName, edgeStreetName) {
     if (inputName.toLowerCase() === edgeStreetName.toLowerCase()) return true;
-    if (normalizeStreetName(inputName) === normalizeStreetName(edgeStreetName)) return true;
+    if (abbreviateStreetName(inputName) === abbreviateStreetName(edgeStreetName)) return true;
     return false;
 }
 
@@ -1396,10 +1396,10 @@ export function handleStreetAutocomplete() {
     }
 
     const allNames = getAllStreetNames();
-    const normalizedQuery = normalizeStreetName(query);
+    const abbrQuery = abbreviateStreetName(query);
     const matches = allNames.filter(name =>
         name.toLowerCase().includes(query) ||
-        normalizeStreetName(name) === normalizedQuery
+        abbreviateStreetName(name) === abbrQuery
     ).slice(0, 8);
 
     if (matches.length === 0) {

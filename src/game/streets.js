@@ -1,7 +1,7 @@
 import { state } from '../state.js';
 import { showMessage, updateStats } from './ui.js';
 import { updateFoundStreetsLayer, highlightStreet, clearHighlight } from '../map/mapbox.js';
-import { normalizeStreetName } from '../utils/string.js';
+import { normalizeStreetName, abbreviateStreetName } from '../utils/string.js';
 import { saveGameState } from '../cache.js';
 
 // Forward reference - set by core.js to avoid circular dependency
@@ -76,6 +76,15 @@ export function findAllMatchingStreets(inputName) {
         return exactMatches;
     }
 
+    // Abbreviation match: "Main Ave" matches "Main Avenue" but NOT "Main Place"
+    const inputAbbr = abbreviateStreetName(inputName);
+    const abbrMatches = state.streetData.features.filter(f => abbreviateStreetName(f.properties.name) === inputAbbr);
+
+    if (abbrMatches.length > 0) {
+        return abbrMatches;
+    }
+
+    // Aggressive match: strip all suffixes (e.g. "Main" matches "Main Street")
     const inputNormalized = normalizeStreetName(inputName);
     return state.streetData.features.filter(f => normalizeStreetName(f.properties.name) === inputNormalized);
 }
