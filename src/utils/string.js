@@ -1,27 +1,4 @@
 
-export function abbreviateStreetName(name) {
-    if (!name) return '';
-    let s = name.toLowerCase().trim();
-    const replacements = [
-        [/\bnortheast\b/g, 'ne'], [/\bnorthwest\b/g, 'nw'],
-        [/\bsoutheast\b/g, 'se'], [/\bsouthwest\b/g, 'sw'],
-        [/\bnorth\b/g, 'n'], [/\bsouth\b/g, 's'],
-        [/\beast\b/g, 'e'], [/\bwest\b/g, 'w'],
-        [/\bavenue\b/g, 'ave'], [/\bstreet\b/g, 'st'],
-        [/\bboulevard\b/g, 'blvd'], [/\bdrive\b/g, 'dr'],
-        [/\broad\b/g, 'rd'], [/\blane\b/g, 'ln'],
-        [/\bcourt\b/g, 'ct'], [/\bplace\b/g, 'pl'],
-        [/\bterrace\b/g, 'ter'], [/\bcircle\b/g, 'cir'],
-        [/\bhighway\b/g, 'hwy'], [/\bparkway\b/g, 'pkwy'],
-        [/\btrail\b/g, 'tr'], [/\bsquare\b/g, 'sq'],
-        [/\bbridge\b/g, 'br'],
-    ];
-    for (const [pattern, abbr] of replacements) {
-        s = s.replace(pattern, abbr);
-    }
-    return s.replace(/[.,']/g, '').replace(/\s+/g, ' ').trim();
-}
-
 export function normalizeStreetName(name) {
     if (!name) return '';
     const originalLower = name.toLowerCase();
