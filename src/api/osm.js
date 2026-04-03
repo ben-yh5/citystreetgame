@@ -294,12 +294,22 @@ function processOSMData(osmData, boundaries = null) {
         }
     });
 
-    // Collect coordinates from unnamed roundabout ways for graph connectivity
+    // Collect unnamed roundabout ways — full geometry + coordinate keys
     const roundaboutCoordKey = (coord) => `${coord[0].toFixed(7)},${coord[1].toFixed(7)}`;
     const roundaboutCoords = new Set();
+    const roundaboutWays = []; // full way geometry for rendering
     osmData.elements.forEach(element => {
         if (element.type === 'way' && element.tags?.junction === 'roundabout' &&
             !element.tags?.name && element.geometry) {
+            const wayCoords = element.geometry
+                .filter(node => !isNaN(node.lon) && !isNaN(node.lat))
+                .map(node => [node.lon, node.lat]);
+            if (wayCoords.length >= 2) {
+                roundaboutWays.push({
+                    coordinates: wayCoords,
+                    highway: element.tags?.highway || 'residential',
+                });
+            }
             element.geometry.forEach(node => {
                 if (!isNaN(node.lon) && !isNaN(node.lat)) {
                     roundaboutCoords.add(roundaboutCoordKey([node.lon, node.lat]));
@@ -310,6 +320,59 @@ function processOSMData(osmData, boundaries = null) {
     state.roundaboutCoords = roundaboutCoords.size > 0 ? roundaboutCoords : null;
     if (roundaboutCoords.size > 0) {
         console.log('Collected', roundaboutCoords.size, 'roundabout coordinates for graph connectivity');
+    }
+
+    // Attach roundabout geometry to connecting named streets for rendering
+    if (roundaboutWays.length > 0) {
+        // Build coord → street names from segment endpoints
+        const endpointStreets = new Map();
+        state.streetSegmentsData.forEach((segments, streetName) => {
+            segments.forEach(seg => {
+                for (const coord of [seg.coordinates[0], seg.coordinates[seg.coordinates.length - 1]]) {
+                    const key = roundaboutCoordKey(coord);
+                    if (!endpointStreets.has(key)) endpointStreets.set(key, new Set());
+                    endpointStreets.get(key).add(streetName);
+                }
+            });
+        });
+
+        let attachedCount = 0;
+        roundaboutWays.forEach(rWay => {
+            const connecting = new Set();
+            rWay.coordinates.forEach(coord => {
+                const key = roundaboutCoordKey(coord);
+                if (endpointStreets.has(key)) {
+                    endpointStreets.get(key).forEach(name => connecting.add(name));
+                }
+            });
+            if (connecting.size < 2) return;
+
+            const length = calculateLineStringLength(rWay.coordinates);
+            const segmentType = getStreetType(rWay.highway);
+
+            connecting.forEach(streetName => {
+                const seg = {
+                    coordinates: rWay.coordinates,
+                    length,
+                    type: segmentType,
+                    highway: rWay.highway,
+                };
+                if (!streetGroups.has(streetName)) streetGroups.set(streetName, []);
+                streetGroups.get(streetName).push(seg);
+                if (!state.streetSegmentsData.has(streetName)) state.streetSegmentsData.set(streetName, []);
+                state.streetSegmentsData.get(streetName).push({
+                    coordinates: rWay.coordinates,
+                    type: segmentType,
+                    highway: rWay.highway,
+                    length,
+                    oneway: true,
+                });
+            });
+            attachedCount++;
+        });
+        if (attachedCount > 0) {
+            console.log('Attached', attachedCount, 'roundabout(s) to connecting streets');
+        }
     }
 
     streetGroups.forEach((segments, streetName) => {

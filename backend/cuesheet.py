@@ -30,14 +30,64 @@ def _make_edge(G, u, v, key=0):
     }
 
 
+def _is_unnamed_roundabout_edge(G, u, v, key):
+    """Check if an edge is an unnamed roundabout segment."""
+    data = G[u][v][key]
+    name = data.get('name')
+    if isinstance(name, list):
+        name = name[0] if name else None
+    if name:
+        return False
+    junction = data.get('junction')
+    if isinstance(junction, list):
+        junction = junction[0] if junction else None
+    return junction == 'roundabout'
+
+
 def _edges_from_node(G, node):
-    """Get all outgoing edges from a node as edge dicts."""
+    """Get all outgoing edges from a node as edge dicts.
+
+    Also traverses unnamed roundabout edges to find named edges on the
+    far side.  Those edges are tagged ``via_roundabout=True`` so callers
+    can distinguish them from direct edges.
+    """
     edges = []
+    rb_nexts = []  # roundabout neighbour nodes to explore
+
     for u, v, key in G.out_edges(node, keys=True):
         name = get_edge_name(G, u, v, key)
-        if name is None:
-            continue  # skip unnamed edges
-        edges.append(_make_edge(G, u, v, key))
+        if name is not None:
+            edges.append(_make_edge(G, u, v, key))
+        elif _is_unnamed_roundabout_edge(G, u, v, key):
+            rb_nexts.append(v)
+
+    if not rb_nexts:
+        return edges
+
+    # BFS through unnamed roundabout edges
+    rb_visited = {node}
+    rb_visited.update(rb_nexts)
+    frontier = list(rb_nexts)
+
+    for _ in range(10):  # small circles are ≤8 nodes
+        next_frontier = []
+        for rb_node in frontier:
+            for _, v, key in G.out_edges(rb_node, keys=True):
+                if v in rb_visited:
+                    continue
+                if _is_unnamed_roundabout_edge(G, rb_node, v, key):
+                    rb_visited.add(v)
+                    next_frontier.append(v)
+                else:
+                    name = get_edge_name(G, rb_node, v, key)
+                    if name is not None:
+                        edge = _make_edge(G, rb_node, v, key)
+                        edge['via_roundabout'] = True
+                        edges.append(edge)
+        frontier = next_frontier
+        if not frontier:
+            break
+
     return edges
 
 
@@ -494,6 +544,7 @@ def _follow_street_forward(G, from_node, street_name, bearing, end_node=None):
                 if not match_street_name(current_street, e['street_name'])
                 and e['v'] not in visited
                 and classify_turn(current_bearing, e['bearing']) != 'U'
+                and not e.get('via_roundabout')
             ]
             if other_streets:
                 break
