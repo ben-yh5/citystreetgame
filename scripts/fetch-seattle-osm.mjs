@@ -3,12 +3,9 @@
 // scripts/fetch-seattle-osm.mjs`, or on a schedule via
 // .github/workflows/fetch-seattle-osm.yml.
 //
-// The query is intentionally broader than what this app's own
-// processOSMData() needs (it drops the name requirement and includes
-// living_street/service ways) because this file is also published as a
-// shared raw-data source for other projects — see CLAUDE.md's "Seattle OSM
-// Data Cache" section. citystreetgame's own client-side filtering already
-// discards unnamed ways, so the extra breadth is harmless here.
+// Mirrors the boundary lookup + Overpass query built by getCityBoundaries()
+// and fetchStreetsFromOSM() in src/api/osm.js, so the cached response is
+// interchangeable with a live one at runtime.
 
 import { writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -37,10 +34,8 @@ async function fetchBoundary() {
     return geojson;
 }
 
-const HIGHWAY_FILTER = '^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|residential|unclassified|living_street|service)$';
-
 function buildOverpassQuery(bbox) {
-    return `[out:json][timeout:120];(way["highway"~"${HIGHWAY_FILTER}"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["junction"="roundabout"]["highway"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out geom;`;
+    return `[out:json][timeout:60];(way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|residential|unclassified)$"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["junction"="roundabout"]["highway"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out geom;`;
 }
 
 function computeExpandedBbox(boundaries) {
