@@ -4,7 +4,7 @@ import {
     updateStats,
     showMessage,
     setLoadingState,
-    updateDifficultyVisibility,
+    updateLocationLabel,
 } from './ui.js';
 import {
     setupCityMapLayers,
@@ -16,6 +16,7 @@ import {
     fetchStreetsFromOSM,
     getCityBoundaries,
     searchCities,
+    FALLBACK_SEATTLE,
 } from '../api/osm.js';
 import {
     calculateBoundariesCenter,
@@ -114,18 +115,15 @@ export function confirmAndLoadCity() {
     state.cityBoundaries = state.previewCity.boundaries;
     state.selectedCityOsmId = state.previewCity.osmId ?? null;
     state.selectedCityOsmType = state.previewCity.osmType ?? null;
+    state.currentCityName = state.previewCity.name ?? null;
+    updateLocationLabel();
     const center = calculateBoundariesCenter(state.cityBoundaries);
-
-    const previewInfo = document.getElementById('preview-info');
-    const loadAreaGroup = document.getElementById('load-area-group');
-    if (previewInfo) previewInfo.style.display = 'none';
-    if (loadAreaGroup) loadAreaGroup.style.display = 'none';
 
     state.isPreviewMode = false;
     state.previousGameConfig = null;
     state.previewCity = null;
 
-    toggleCityConfigMode(false);
+    clearCityPreviewUI();
 
     loadStreetsForCity(state.cityBoundaries, center[1], center[0]);
 }
@@ -186,69 +184,67 @@ export async function loadStreetsForCity(boundaries, lat, lng) {
     }
 }
 
-export function toggleCityConfigMode(forceState = null) {
-    state.isSettingCenter = forceState ?? !state.isSettingCenter;
-    const btn = document.getElementById('set-center-btn');
-
-    if (!state.isSettingCenter) {
-        if (state.isPreviewMode && state.previousGameConfig) {
-            state.cityBoundaries = state.previousGameConfig.boundaries;
-            state.GAME_CENTER = [...state.previousGameConfig.center];
-
-            if (state.streetData && state.cityBoundaries) {
-                const center = calculateBoundariesCenter(state.cityBoundaries);
-                setupCityMapLayers(state.cityBoundaries, center[1], center[0]);
-            }
+export async function loadDefaultCity() {
+    setLoadingState(true, `Fetching boundaries for ${FALLBACK_SEATTLE.name}...`);
+    try {
+        const boundaries = await getCityBoundaries(FALLBACK_SEATTLE.osmType, FALLBACK_SEATTLE.osmId, FALLBACK_SEATTLE);
+        if (!boundaries) {
+            setLoadingState(false);
+            return;
         }
 
-        state.isPreviewMode = false;
-        state.previewCity = null;
-        state.previousGameConfig = null;
-        btn.textContent = 'Configure';
-        btn.classList.remove('active', 'preview');
+        state.cityBoundaries = getLargestPolygon(boundaries);
+        state.selectedCityOsmId = FALLBACK_SEATTLE.osmId;
+        state.selectedCityOsmType = FALLBACK_SEATTLE.osmType;
+        state.currentCityName = FALLBACK_SEATTLE.name;
+        updateLocationLabel();
 
-        const previewInfo = document.getElementById('preview-info');
-        const cityInputGroup = document.getElementById('city-input-group');
-        const loadAreaGroup = document.getElementById('load-area-group');
-        const cityInput = document.getElementById('city-input');
-        const citySuggestions = document.getElementById('city-suggestions');
+        const center = calculateBoundariesCenter(state.cityBoundaries);
+        await loadStreetsForCity(state.cityBoundaries, center[1], center[0]);
+    } catch (error) {
+        console.error('Error loading default city:', error);
+        setLoadingState(false);
+    }
+}
 
-        if (previewInfo) previewInfo.style.display = 'none';
-        if (cityInputGroup) {
-            cityInputGroup.style.display = 'none';
-        }
-        if (loadAreaGroup) loadAreaGroup.style.display = 'none';
+// Resets the location UI back to its idle state (no pending preview).
+// Shared by committing a preview (confirmAndLoadCity) and canceling one (cancelCityPreview).
+function clearCityPreviewUI() {
+    const previewInfo = document.getElementById('preview-info');
+    const loadAreaGroup = document.getElementById('load-area-group');
+    const cityInput = document.getElementById('city-input');
+    const citySuggestions = document.getElementById('city-suggestions');
 
-        if (cityInput) cityInput.value = '';
-        if (citySuggestions) citySuggestions.style.display = 'none';
+    if (previewInfo) previewInfo.style.display = 'none';
+    if (loadAreaGroup) loadAreaGroup.style.display = 'none';
+    if (cityInput) cityInput.value = '';
+    if (citySuggestions) citySuggestions.style.display = 'none';
 
-        if (!state.streetData) {
-            ['city-boundary-fill', 'city-boundary-line'].forEach(id => {
-                if (state.map.getLayer(id)) state.map.removeLayer(id);
-            });
-            if (state.map.getSource('city-boundary')) state.map.removeSource('city-boundary');
-        }
-    } else {
-        btn.textContent = 'Cancel';
-        btn.classList.add('active');
+    if (!state.streetData) {
+        ['city-boundary-fill', 'city-boundary-line'].forEach(id => {
+            if (state.map.getLayer(id)) state.map.removeLayer(id);
+        });
+        if (state.map.getSource('city-boundary')) state.map.removeSource('city-boundary');
+    }
+}
 
-        const cityInputGroup = document.getElementById('city-input-group');
+// Reverts an in-progress city preview (from picking a search suggestion) without loading it.
+export function cancelCityPreview() {
+    if (state.isPreviewMode && state.previousGameConfig) {
+        state.cityBoundaries = state.previousGameConfig.boundaries;
+        state.GAME_CENTER = [...state.previousGameConfig.center];
 
-        if (cityInputGroup) {
-            cityInputGroup.style.display = 'block';
-
-            setTimeout(() => {
-                const cityInput = document.getElementById('city-input');
-                if (cityInput) {
-                    cityInput.focus();
-                }
-            }, 100);
-        } else {
-            console.error('cityInputGroup element not found!');
+        if (state.streetData && state.cityBoundaries) {
+            const center = calculateBoundariesCenter(state.cityBoundaries);
+            setupCityMapLayers(state.cityBoundaries, center[1], center[0]);
         }
     }
 
-    updateDifficultyVisibility();
+    state.isPreviewMode = false;
+    state.previewCity = null;
+    state.previousGameConfig = null;
+
+    clearCityPreviewUI();
 }
 
 // --- UNDO/REDO ---
@@ -401,9 +397,6 @@ function showCitySuggestions(cities) {
                         };
 
                         state.isPreviewMode = true;
-                        const btn = document.getElementById('set-center-btn');
-                        btn.textContent = 'Cancel';
-                        btn.classList.add('preview');
 
                         const previewInfo = document.getElementById('preview-info');
                         if (previewInfo) {
@@ -449,58 +442,71 @@ function showCitySuggestions(cities) {
 
 // --- CACHE RESTORE ---
 
-export function restoreGame(data) {
+export async function restoreGame(data) {
     state.gameMode = data.gameMode || 'streets';
     state.intersectionDifficulty = data.intersectionDifficulty || 'major-major';
     state.cityBoundaries = data.cityBoundaries;
     state.currentCenter = data.currentCenter;
     state.selectedCityOsmId = data.selectedCityOsmId ?? null;
     state.selectedCityOsmType = data.selectedCityOsmType ?? null;
-    state.streetData = data.streetData || null;
-    state.totalLength = data.totalLength || 0;
+    state.currentCityName = data.currentCityName ?? null;
+    updateLocationLabel();
     state.foundStreets = new Set(data.foundStreets || []);
     state.foundIntersections = new Set(data.foundIntersections || []);
     state.intersectionScore = data.intersectionScore || 0;
     state.intersectionAccuracy = data.intersectionAccuracy || [];
-    if (state.streetData) {
-        rebuildStreetSegmentsData();
-    }
 
-    const gameModeSelect = document.getElementById('game-mode-select');
-    if (gameModeSelect) gameModeSelect.value = state.gameMode;
+    updateModeUI();
     const difficultySelect = document.getElementById('difficulty-select');
     if (difficultySelect) difficultySelect.value = state.intersectionDifficulty;
 
-    const restoreLayers = () => {
-        if (!state.cityBoundaries || !state.streetData) return;
+    if (!state.cityBoundaries) return;
 
-        setupCityMapLayers(state.cityBoundaries, state.currentCenter[1], state.currentCenter[0]);
+    // Street geometry itself isn't persisted (too large for localStorage) —
+    // refetch it for the saved area/city and rehydrate found streets/intersections on top.
+    setLoadingState(true, 'Restoring your last session...');
+    try {
+        state.streetData = await fetchStreetsFromOSM(state.cityBoundaries, {
+            osmId: state.selectedCityOsmId,
+            osmType: state.selectedCityOsmType,
+        });
+        state.totalLength = state.streetData.features.reduce((sum, f) => sum + f.properties.length, 0);
+        rebuildStreetSegmentsData();
 
-        if (state.foundStreets.size > 0) {
-            updateFoundStreetsLayer();
+        const finishRestore = () => {
+            setupCityMapLayers(state.cityBoundaries, state.currentCenter[1], state.currentCenter[0]);
+
+            if (state.foundStreets.size > 0) {
+                updateFoundStreetsLayer();
+            }
+            rebuildFoundItemsList();
+
+            const streetInput = document.getElementById('street-input');
+            const resetBtn = document.getElementById('reset-btn');
+            if (streetInput) { streetInput.disabled = false; streetInput.placeholder = 'ENTER A STREET'; }
+            if (resetBtn) resetBtn.disabled = false;
+
+            if (state.gameMode === 'intersections') {
+                nextIntersection();
+            } else if (state.gameMode === 'cuesheet') {
+                generateCuesheetChallenge();
+            }
+
+            updateModeUI();
+            updateStats();
+            saveGameState();
+        };
+
+        if (state.map.loaded()) {
+            finishRestore();
+        } else {
+            state.map.on('load', finishRestore);
         }
-
-        rebuildFoundItemsList();
-
-        const streetInput = document.getElementById('street-input');
-        const resetBtn = document.getElementById('reset-btn');
-        if (streetInput) { streetInput.disabled = false; streetInput.placeholder = 'ENTER A STREET'; }
-        if (resetBtn) resetBtn.disabled = false;
-
-        if (state.gameMode === 'intersections') {
-            nextIntersection();
-        } else if (state.gameMode === 'cuesheet') {
-            generateCuesheetChallenge();
-        }
-
-        updateModeUI();
-        updateStats();
-    };
-
-    if (state.map.loaded()) {
-        restoreLayers();
-    } else {
-        state.map.on('load', restoreLayers);
+    } catch (error) {
+        console.error('Error restoring last session:', error);
+        showMessage('Could not restore your last session. Try loading an area again.', 'error');
+    } finally {
+        setTimeout(() => setLoadingState(false), 500);
     }
 }
 

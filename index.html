@@ -10,20 +10,19 @@
 </head>
 <body>
     <div class="sidebar">
-        <!-- Mode Selector -->
-        <div class="sidebar-section">
-            <h3>Game Mode</h3>
-            <div class="form-group">
-                <select id="game-mode-select" class="form-input">
-                    <option value="streets">name streets</option>
-                    <option value="intersections">find intersections</option>
-                    <option value="cuesheet">navigate route (a little broken)</option>
-                </select>
+        <!-- Mode Switcher -->
+        <div class="sidebar-header">
+            <div class="mode-tabs" id="mode-tabs">
+                <div class="mode-tab-indicator" id="mode-tab-indicator"></div>
+                <button type="button" class="mode-tab" data-mode="streets">Streets</button>
+                <button type="button" class="mode-tab" data-mode="intersections">Intersections</button>
+                <button type="button" class="mode-tab" data-mode="cuesheet">Route</button>
             </div>
+            <button type="button" class="current-location" id="current-location-label">No area loaded</button>
         </div>
 
         <!-- Stats Panel -->
-        <div class="sidebar-section" id="stats-section">
+        <div class="sidebar-section stats-section" id="stats-section">
             <div class="stats-panel">
                 <div class="score-display">
                     <span class="score-number" id="score">0.00%</span>
@@ -51,17 +50,28 @@
         </div>
 
         <!-- Found Items List (context-dependent) -->
-        <div class="sidebar-section" id="found-items-section" style="flex: 1; display: flex; flex-direction: column;">
+        <div class="sidebar-section sidebar-main" id="found-items-section" style="flex: 1; display: flex; flex-direction: column;">
             <h3 id="found-list-title">Found Streets</h3>
+
+            <!-- Street Mode: Autofill Tool (common enough to keep out of Tools & Settings) -->
+            <div class="form-group autofill-group" id="autofill-section">
+                <label>Autofill numbered streets</label>
+                <div class="autofill-range">
+                    <input type="number" id="autofill-from" class="form-input autofill-input" placeholder="From" value="1">
+                    <input type="number" id="autofill-to" class="form-input autofill-input" placeholder="To" value="200">
+                    <button id="autofill-btn" class="sidebar-button autofill-button">Autofill</button>
+                </div>
+            </div>
+
             <div class="search-container">
                 <input type="text" id="item-search" class="search-input" placeholder="Search found items...">
             </div>
             <div id="found-items-list" class="found-items-list">
             </div>
         </div>
-        
+
         <!-- Cuesheet Mode: Route Cues (sidebar) -->
-        <div class="sidebar-section" id="cuesheet-sidebar-section" style="flex: 1; display: none; flex-direction: column;">
+        <div class="sidebar-section sidebar-main" id="cuesheet-sidebar-section" style="flex: 1; display: none; flex-direction: column;">
             <h3>Route Cues</h3>
             <div id="cuesheet-list" class="cuesheet-list"></div>
             <div class="cuesheet-actions">
@@ -72,67 +82,59 @@
             </div>
         </div>
 
-        <!-- Map Tools -->
-        <div class="sidebar-section" id="map-tools-section">
-            <h3>Map Tools</h3>
-            <div class="form-group switch-container">
-                <label for="show-unfound-toggle">Show Unfound Streets</label>
-                <label class="switch">
-                    <input type="checkbox" id="show-unfound-toggle">
-                    <span class="slider"></span>
-                </label>
-            </div>
-            <div class="form-group switch-container">
-                <label for="show-street-names-toggle">Show Names on Hover</label>
-                <label class="switch">
-                    <input type="checkbox" id="show-street-names-toggle">
-                    <span class="slider"></span>
-                </label>
-            </div>
-        </div>
-        
-        <!-- Street Mode: Autofill Tool -->
-        <div class="sidebar-section" id="autofill-section">
-            <h3>Autofill Numbered Streets</h3>
-            <div class="form-group autofill-range">
-                <input type="number" id="autofill-from" class="form-input autofill-input" placeholder="From" value="1">
-                <input type="number" id="autofill-to" class="form-input autofill-input" placeholder="To" value="10">
-                <button id="autofill-btn" class="sidebar-button autofill-button">Autofill</button>
-            </div>
-        </div>
+        <!-- Tools & Settings (collapsed by default to keep the sidebar focused on the game) -->
+        <div class="sidebar-section tools-section" id="tools-section">
+            <button type="button" class="tools-toggle" id="tools-toggle">
+                <span>Tools &amp; Settings</span>
+                <span class="tools-toggle-icon">&#9662;</span>
+            </button>
+            <div class="tools-content" id="tools-content">
+                <div class="form-group switch-container">
+                    <label for="show-unfound-toggle">Show Unfound Streets</label>
+                    <label class="switch">
+                        <input type="checkbox" id="show-unfound-toggle">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div class="form-group switch-container">
+                    <label for="show-street-names-toggle">Show Names on Hover</label>
+                    <label class="switch">
+                        <input type="checkbox" id="show-street-names-toggle">
+                        <span class="slider"></span>
+                    </label>
+                </div>
 
-        <!-- Configuration -->
-        <div class="sidebar-section">
-            <div class="form-group">
-                <button id="set-center-btn" class="sidebar-button">Configure</button>
+                <div class="tools-divider"></div>
+
+                <!-- Location -->
+                <div class="form-group city-input-group" id="city-input-group">
+                    <label for="city-input">City, Neighborhood, or Location Name</label>
+                    <input type="text" id="city-input" class="form-input" placeholder="Enter location and press Enter (e.g. Seattle, WA or Capitol Hill)">
+                    <div id="city-suggestions" class="city-suggestions"></div>
+                </div>
+
+                <!-- Intersection/Route Mode: Difficulty Selector -->
+                <div class="form-group" id="difficulty-group" style="display: none;">
+                    <label for="difficulty-select">Difficulty</label>
+                    <select id="difficulty-select" class="form-input">
+                        <option value="major-major">Major Roads Only</option>
+                        <option value="major-all">Major + Local</option>
+                        <option value="all-all">All Streets</option>
+                    </select>
+                </div>
+
                 <div id="preview-info" class="preview-info" style="display: none;">
                     Area boundary preview shown. Click "Load New Area" to start the game.
                 </div>
+                <div class="form-group city-preview-actions" id="load-area-group" style="display: none;">
+                    <button id="load-area-btn" class="sidebar-button">Load New Area</button>
+                    <button id="cancel-preview-btn" class="sidebar-button cuesheet-secondary">Cancel</button>
+                </div>
+
+                <div class="tools-divider"></div>
+
+                <button class="sidebar-button reset-button" onclick="resetGame()" disabled id="reset-btn">Reset Progress</button>
             </div>
-            
-            <!-- Intersection Mode: Difficulty Selector -->
-            <div class="form-group" id="difficulty-group" style="display: none;">
-                <label for="difficulty-select">Difficulty</label>
-                <select id="difficulty-select" class="form-input">
-                    <option value="major-major">Major Roads Only</option>
-                    <option value="major-all">Major + Local</option>
-                    <option value="all-all">All Streets</option>
-                </select>
-            </div>
-            
-            <div class="form-group city-input-group" id="city-input-group" style="display: none;">
-                <label for="city-input">City, Neighborhood, or Location Name</label>
-                <input type="text" id="city-input" class="form-input" placeholder="Enter location and press Enter (e.g. Seattle, WA or Capitol Hill)">
-                <div id="city-suggestions" class="city-suggestions"></div>
-            </div>
-             <div class="form-group" id="load-area-group" style="display: none;">
-                <button id="load-area-btn" class="sidebar-button">Load New Area</button>
-            </div>
-        </div>
-        
-        <!-- Reset Button -->
-        <div class="sidebar-section">
-            <button class="sidebar-button" onclick="resetGame()" disabled id="reset-btn">Reset</button>
         </div>
     </div>
 

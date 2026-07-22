@@ -3,12 +3,13 @@ import { initMap, hideStreetTooltip } from './src/map/mapbox.js';
 import {
     switchGameMode,
     confirmAndLoadCity,
-    toggleCityConfigMode,
+    cancelCityPreview,
     resetGame,
     handleCitySearch,
     undo,
     redo,
-    restoreGame
+    restoreGame,
+    loadDefaultCity
 } from './src/game/core.js';
 import { handleStreetInput, filterFoundItems, autofillNumberedStreets } from './src/game/streets.js';
 import { handleMapClick, submitGuess, nextIntersection } from './src/game/intersectionMode.js';
@@ -37,11 +38,43 @@ document.addEventListener('DOMContentLoaded', function() {
          });
     }
 
-    // Mode selector
-    const gameModeSelect = document.getElementById('game-mode-select');
-    if (gameModeSelect) {
-        gameModeSelect.addEventListener('change', (e) => {
-            switchGameMode(e.target.value);
+    // Mode selector (segmented tabs)
+    const modeTabs = document.getElementById('mode-tabs');
+    if (modeTabs) {
+        modeTabs.addEventListener('click', (e) => {
+            const tab = e.target.closest('.mode-tab');
+            if (tab && !tab.classList.contains('active')) {
+                switchGameMode(tab.dataset.mode);
+            }
+        });
+    }
+
+    // Tools & settings panel (collapsed by default)
+    const toolsToggle = document.getElementById('tools-toggle');
+    const toolsContent = document.getElementById('tools-content');
+    const openToolsPanel = () => {
+        if (toolsContent && !toolsContent.classList.contains('open')) {
+            toolsContent.classList.add('open');
+            toolsToggle.classList.add('open');
+        }
+    };
+    if (toolsToggle && toolsContent) {
+        toolsToggle.addEventListener('click', () => {
+            const isOpen = toolsContent.classList.toggle('open');
+            toolsToggle.classList.toggle('open', isOpen);
+        });
+    }
+
+    // Clicking the current location jumps straight to the city search box
+    const locationLabel = document.getElementById('current-location-label');
+    if (locationLabel) {
+        locationLabel.addEventListener('click', () => {
+            openToolsPanel();
+            const cityInput = document.getElementById('city-input');
+            if (cityInput) {
+                cityInput.focus();
+                cityInput.select();
+            }
         });
     }
 
@@ -75,11 +108,9 @@ document.addEventListener('DOMContentLoaded', function() {
         loadAreaBtn.addEventListener('click', () => confirmAndLoadCity());
     }
 
-    const setCenterBtn = document.getElementById('set-center-btn');
-    if (setCenterBtn) {
-        setCenterBtn.addEventListener('click', () => {
-            toggleCityConfigMode();
-        });
+    const cancelPreviewBtn = document.getElementById('cancel-preview-btn');
+    if (cancelPreviewBtn) {
+        cancelPreviewBtn.addEventListener('click', () => cancelCityPreview());
     }
 
     const showUnfoundToggle = document.getElementById('show-unfound-toggle');
@@ -127,6 +158,15 @@ document.addEventListener('DOMContentLoaded', function() {
         const citySuggestions = document.getElementById('city-suggestions');
         if (cityInputGroup && citySuggestions && !cityInputGroup.contains(e.target)) {
             citySuggestions.style.display = 'none';
+        }
+
+        const toolsSection = document.getElementById('tools-section');
+        const locationLabel = document.getElementById('current-location-label');
+        const clickedOutsideTools = toolsSection && !toolsSection.contains(e.target) &&
+            !(locationLabel && locationLabel.contains(e.target));
+        if (toolsContent && toolsToggle && toolsContent.classList.contains('open') && clickedOutsideTools) {
+            toolsContent.classList.remove('open');
+            toolsToggle.classList.remove('open');
         }
     });
 
@@ -234,11 +274,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Restore from cache or initialize fresh
+    // Restore the last area/progress from cache, or load Seattle (cached data) by default
     const savedData = loadGameState();
-    if (savedData && savedData.streetData) {
+    if (savedData && savedData.cityBoundaries) {
         restoreGame(savedData);
     } else {
         switchGameMode(state.gameMode);
+        loadDefaultCity();
     }
 });

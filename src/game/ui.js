@@ -20,7 +20,7 @@ function setUnfoundStreets(on) {
 export function setLoadingState(isLoading, text = '') {
     const screen = document.getElementById('loading-screen');
     const textEl = document.getElementById('loading-text');
-    const inputs = ['street-input', 'reset-btn', 'load-area-btn', 'set-center-btn', 'autofill-btn'];
+    const inputs = ['street-input', 'reset-btn', 'load-area-btn', 'autofill-btn'];
     
     if (screen) {
         if (isLoading) {
@@ -64,7 +64,8 @@ export function updateStats() {
         
         const totalDistanceEl = document.getElementById('total-distance');
         if (totalDistanceEl) {
-            totalDistanceEl.textContent = state.totalLength.toFixed(1);
+            const totalMiles = state.totalLength / 1609.34;
+            totalDistanceEl.textContent = totalMiles.toFixed(1);
         }
     } else if (state.gameMode === 'intersections') {
         const avgAccuracy = state.intersectionAccuracy.length > 0 ? 
@@ -75,7 +76,32 @@ export function updateStats() {
     }
 }
 
+function fadeIn(el) {
+    if (!el) return;
+    el.classList.remove('mode-fade-in');
+    void el.offsetWidth; // force reflow so the animation restarts
+    el.classList.add('mode-fade-in');
+}
+
+function updateModeTabs() {
+    const tabs = document.querySelectorAll('.mode-tab');
+    const indicator = document.getElementById('mode-tab-indicator');
+    let activeTab = null;
+
+    tabs.forEach(tab => {
+        const isActive = tab.dataset.mode === state.gameMode;
+        tab.classList.toggle('active', isActive);
+        if (isActive) activeTab = tab;
+    });
+
+    if (indicator && activeTab) {
+        indicator.style.width = `${activeTab.offsetWidth}px`;
+        indicator.style.transform = `translateX(${activeTab.offsetLeft}px)`;
+    }
+}
+
 export function updateModeUI() {
+    updateModeTabs();
     const streetInputContainer = document.getElementById('street-input-container');
     const intersectionDisplayContainer = document.getElementById('intersection-display-container');
     const autofillSection = document.getElementById('autofill-section');
@@ -93,11 +119,9 @@ export function updateModeUI() {
     // Restore sections that may have been hidden by other modes
     const statsSection = document.getElementById('stats-section');
     const foundItemsSec = document.getElementById('found-items-section');
-    const mapToolsSection = document.getElementById('map-tools-section');
     const cuesheetSidebarSection = document.getElementById('cuesheet-sidebar-section');
     if (statsSection) statsSection.style.display = '';
     if (foundItemsSec) foundItemsSec.style.display = '';
-    if (mapToolsSection) mapToolsSection.style.display = '';
     if (cuesheetSidebarSection) cuesheetSidebarSection.style.display = 'none';
 
     if (state.gameMode === 'streets') {
@@ -168,10 +192,17 @@ export function updateModeUI() {
     }
 
     // Hide cuesheet container when not in cuesheet mode
+    const cuesheetContainer = document.getElementById('cuesheet-display-container');
     if (state.gameMode !== 'cuesheet') {
-        const cuesheetContainer = document.getElementById('cuesheet-display-container');
         if (cuesheetContainer) cuesheetContainer.style.display = 'none';
     }
+
+    // Fade in whichever overlay + sidebar content is now active, so mode switches feel seamless
+    const activeOverlay = state.gameMode === 'streets' ? streetInputContainer
+        : state.gameMode === 'intersections' ? intersectionDisplayContainer
+        : cuesheetContainer;
+    fadeIn(activeOverlay);
+    fadeIn(state.gameMode === 'cuesheet' ? cuesheetSidebarSection : foundItemsSection);
 
     updateDifficultyVisibility();
 }
@@ -179,9 +210,14 @@ export function updateModeUI() {
 export function updateDifficultyVisibility() {
     const difficultyGroup = document.getElementById('difficulty-group');
     if (difficultyGroup) {
-        const shouldShow = (state.gameMode === 'intersections' || state.gameMode === 'cuesheet') && state.isSettingCenter;
+        const shouldShow = state.gameMode === 'intersections' || state.gameMode === 'cuesheet';
         difficultyGroup.style.display = shouldShow ? 'block' : 'none';
     }
+}
+
+export function updateLocationLabel() {
+    const label = document.getElementById('current-location-label');
+    if (label) label.textContent = state.currentCityName || 'No area loaded';
 }
 
 export function showAccuracyFeedback(distanceMeters, points) {

@@ -224,10 +224,38 @@ function addEdge(edges, fromId, toId, streetName, distance, bearing, entryBearin
     });
 }
 
+// Grid cell size in degrees, comfortably larger than NODE_MERGE_DISTANCE so any two
+// points within merge range fall in the same or an adjacent cell (~30m at the equator).
+const MERGE_GRID_CELL_DEG = 0.0003;
+
 function mergeNearbyNodes(nodes) {
     const merged = new Map();
     const nodeList = [...nodes.entries()];
     const consumed = new Set();
+
+    // Bucket nodes into a coarse grid so each node only compares against nearby
+    // candidates instead of every other node — an all-pairs scan is O(n^2) and
+    // takes upwards of a minute on a full city's worth of intersections.
+    const grid = new Map(); // "cx,cy" -> indices into nodeList
+    const cellKey = (lat, lng) => `${Math.floor(lat / MERGE_GRID_CELL_DEG)},${Math.floor(lng / MERGE_GRID_CELL_DEG)}`;
+    nodeList.forEach(([, data], idx) => {
+        const key = cellKey(data.lat, data.lng);
+        if (!grid.has(key)) grid.set(key, []);
+        grid.get(key).push(idx);
+    });
+
+    function nearbyCandidates(lat, lng) {
+        const cx = Math.floor(lat / MERGE_GRID_CELL_DEG);
+        const cy = Math.floor(lng / MERGE_GRID_CELL_DEG);
+        const indices = [];
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                const bucket = grid.get(`${cx + dx},${cy + dy}`);
+                if (bucket) indices.push(...bucket);
+            }
+        }
+        return indices;
+    }
 
     for (let i = 0; i < nodeList.length; i++) {
         if (consumed.has(nodeList[i][0])) continue;
@@ -238,7 +266,8 @@ function mergeNearbyNodes(nodes) {
         let sumLat = data1.lat;
         let sumLng = data1.lng;
 
-        for (let j = i + 1; j < nodeList.length; j++) {
+        for (const j of nearbyCandidates(data1.lat, data1.lng)) {
+            if (j === i) continue;
             if (consumed.has(nodeList[j][0])) continue;
 
             const [key2, data2] = nodeList[j];

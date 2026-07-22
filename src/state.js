@@ -13,7 +13,7 @@ export const state = {
 
     // Game Config
     GAME_CENTER: [-122.3321, 47.6062], // Seattle [lng, lat]
-    isSettingCenter: false,
+    currentCityName: null,
     isPreviewMode: false,
     previewCity: null,
     selectedCityOsmId: null,
