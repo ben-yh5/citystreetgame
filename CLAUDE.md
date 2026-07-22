@@ -8,62 +8,66 @@ City Street Game — a browser-based geography game where players test their kno
 ## Commands
 
 ### Frontend (Vite + vanilla JS)
-- `npm run dev` — start Vite dev server (proxies `/api` to backend)
+- `npm run dev` — start Vite dev server
 - `npm run build` — production build to `dist/`
 - No test framework is configured.
 
-### Backend (FastAPI + OSMnx)
-- `pip install -r backend/requirements.txt` — install Python dependencies
-- `python3 -m uvicorn backend.main:app --host 127.0.0.1 --port 8000` — start backend
-- Both frontend and backend must be running for cuesheet and intersection modes.
+The app is fully static — no backend process needs to be running for any game mode.
 
 ## Architecture
 
-### Frontend ↔ Backend
-- Frontend: Vite + vanilla JS, Mapbox GL JS (CDN), no npm runtime dependencies
-- Backend: FastAPI with OSMnx (street data from OSM) + NetworkX (graph operations)
-- Vite dev server proxies `/api/*` → `http://localhost:8000` (see `vite.config.js`)
-- All graph/routing logic runs on backend; frontend handles UI/rendering only
-- API client: `src/api/backend.js` wraps all backend calls
+### Frontend — fully client-side
+- Vite + vanilla JS, Mapbox GL JS (CDN), no npm runtime dependencies
+- All street data, geometry, and graph/routing logic run in the browser
+- Street data comes from a live Overpass API call (`fetchStreetsFromOSM()` in `src/api/osm.js`), with Seattle backed by a monthly-refreshed static cache (see below)
+- A `backend/` FastAPI service (OSMnx + NetworkX) exists in the repo from an earlier architecture but is **not currently wired up** — `src/api/backend.js` (its client wrapper) is not imported anywhere in `src/`. Treat it as unused/legacy unless someone reconnects it.
 
 ### Frontend Structure
 - `index.js` — event listeners, app initialization
 - `src/state.js` — single mutable `state` object used everywhere (global state pattern)
 - `src/cache.js` — localStorage save/load
-- `src/api/osm.js` — Overpass API + Nominatim city search
-- `src/api/backend.js` — all backend API calls
+- `src/api/osm.js` — Overpass API + Nominatim city search; populates `state.streetData` / `state.streetSegmentsData`
+- `src/api/backend.js` — client wrapper for the unused `backend/` FastAPI service (dead code, not imported)
 - `src/map/mapbox.js` — map setup, layers, tooltips
 - `src/utils/string.js` — `normalizeStreetName()` strips directionals and road suffixes for fuzzy matching
 - `src/game/core.js` — shared logic: mode switching, city loading, undo/redo, cache restore
 - `src/game/streets.js` — "Name Streets" mode
-- `src/game/intersectionMode.js` — "Find Intersections" mode
-- `src/game/cuesheet.js` — "Navigate Route" mode
+- `src/game/graph.js` — client-side street graph, Dijkstra shortest path, bearing/turn classification (used by cuesheet mode)
+- `src/game/intersectionMode.js` + `src/game/intersections.js` — "Find Intersections" mode: geometric line-segment intersection detection against `state.streetData`
+- `src/game/cuesheet.js` — "Navigate Route" mode, built on `graph.js`
 - `src/game/ui.js` — UI updates: mode switching, stats display, loading state
 
-### Backend Structure
+### Backend Structure (unused — see above)
 - `backend/main.py` — FastAPI app, endpoints, in-memory state (`city_graphs`, `route_states`)
 - `backend/cuesheet.py` — challenge generation, cue validation, Dijkstra routing, street following
 - `backend/geo.py` — bearing calculations, turn classification (`L/R/S/U`), street name normalization
 - `backend/models.py` — Pydantic request/response models
+- Kept in the repo in case the client-side approach needs to be replaced; not deployed, not started by any dev command, not called by the frontend
 
 ### Key Patterns
-- **City ID**: SHA256 hash of boundary GeoJSON (stable across sessions)
-- **Route state**: lives on backend keyed by `route_id` (UUID); frontend stores only coordinate arrays for rendering
-- **Street name matching**: two-tier — exact case-insensitive first, then normalized (both frontend `normalizeStreetName()` and backend `match_street_name()`)
-- **Cache restore**: calls `backendLoadCity()` to re-load graph since backend state is ephemeral
+- **Street name matching**: two-tier — exact case-insensitive first, then normalized (`normalizeStreetName()` in `src/utils/string.js`)
 - **Circular dependency avoidance**: `streets.js` uses `setSaveState()` callback pattern from `core.js`
-- **Cuesheet rendering**: confirmed edges = solid green line, unconfirmed (continuation) = dashed green line; `confirmed_edge_count` marks the boundary
+- **Cuesheet rendering**: confirmed edges = solid green line, unconfirmed (continuation) = dashed green line
 
-### Cuesheet Mode
-- Backend picks start/end nodes, initializes route by auto-following the starting street
-- Player submits cues: direction (`L/S/R`) + street name → backend validates against graph
-- `_follow_street_forward()` continues along a street until a decision point (another named street branches off)
-- `_find_turn_street_ahead()` searches forward along current street for a target intersection
-- Name-change passthrough: implicit `S` cues auto-inserted when road continues straight under a different name
-- Hint uses Dijkstra shortest path to suggest next optimal turn
-- Custom routes: user clicks map to pick start/end nodes
+### Find Intersections Mode
+- `generateRandomIntersection()` (`src/game/intersections.js`) picks a candidate street (filtered by difficulty from `state.streetData`), then checks other streets' line geometry for segment-pair proximity (≤5m) via `getClosestPointsBetweenSegments`
+- Street classification at a specific location comes from `state.streetSegmentsData`, not the overall street type
+- Pure geometry, no graph structure
+
+### Navigate Route (Cuesheet) Mode
+- `buildStreetGraph()` (`src/game/graph.js`) builds a node/edge graph client-side from `state.streetSegmentsData`
+- `findShortestPath()` runs Dijkstra in the browser; `calculateBearing()`/`classifyTurn()` compute turn directions (`L/R/S/U`)
+- Player submits cues: direction + street name → validated against the client-side graph
+
+### Seattle OSM Data Cache
+- `public/data/osm/seattle-ways.json` is a static snapshot of the Overpass response for Seattle's street ways, clipped to Seattle's city-limit bbox (+ small buffer)
+- Refreshed monthly by `.github/workflows/fetch-seattle-osm.yml`, which runs `scripts/fetch-seattle-osm.mjs`
+- The city boundary is still fetched live from Nominatim on every city selection (cheap, not the reliability bottleneck) and used to filter the cached ways via point-in-polygon, same as the live-Overpass path
+- `fetchStreetsFromOSM(boundaries, cityMeta)` uses the cache when `cityMeta.osmId`/`osmType` match Seattle's known OSM relation (`237385`, see `FALLBACK_SEATTLE` in `osm.js`), set on `state.selectedCityOsmId`/`selectedCityOsmType` when a city is confirmed in `core.js`; falls back to a live Overpass fetch on any load failure or when a different city is selected
+- OSM-ID matching was chosen over bbox comparison because Seattle's official boundary is a MultiPolygon with two similarly-sized parts — `getLargestPolygon()`'s area tie-break isn't stable across independent Nominatim requests, so bbox equality between a live fetch and the cache is unreliable
+- **Note:** the fetch script's Overpass query is deliberately broader than what this app itself needs (no `name` requirement, includes `living_street`/`service`), because `seattle-ways.json` is also published via GitHub Pages as a shared raw-data source for other projects. This app's own `processOSMData()` already discards unnamed ways, so the extra breadth is harmless here — but don't narrow the query back down without checking what else reads this file.
 
 ## Deployment
 - GitHub Pages with base path `/citystreetgame/` (see `vite.config.js`)
 - Mapbox GL JS v2.15.0 loaded from CDN in `index.html`
-- Backend not deployed (local only); frontend-only features (Name Streets) work without it
+- Fully static site; no backend to deploy

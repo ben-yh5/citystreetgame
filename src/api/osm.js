@@ -6,7 +6,7 @@ export const FALLBACK_SEATTLE = {
     fullName: 'Seattle, King County, Washington, United States',
     lat: 47.6062,
     lon: -122.3321,
-    osmId: 237662,
+    osmId: 237385,
     osmType: 'relation'
 };
 
@@ -184,42 +184,69 @@ export function createFallbackBoundary(cityData) {
     };
 }
 
-export async function fetchStreetsFromOSM(boundaries) {
-    const mainBoundary = getLargestPolygon(boundaries);
-    if (!mainBoundary) return { type: 'FeatureCollection', features: [] };
-    
+function boundaryBbox(mainBoundary) {
     const coords = mainBoundary.coordinates[0];
-    if (coords.length === 0) return { type: 'FeatureCollection', features: [] };
-    
+    if (coords.length === 0) return null;
+
     const lats = coords.map(c => c[1]);
     const lngs = coords.map(c => c[0]);
-    const bbox = {
+    return {
         south: Math.min(...lats),
         west: Math.min(...lngs),
         north: Math.max(...lats),
         east: Math.max(...lngs)
     };
-    
+}
+
+function isSeattle(cityMeta) {
+    return cityMeta?.osmType === FALLBACK_SEATTLE.osmType && cityMeta?.osmId === FALLBACK_SEATTLE.osmId;
+}
+
+async function fetchCachedSeattleWays() {
+    const response = await fetch(`${import.meta.env.BASE_URL}data/osm/seattle-ways.json`);
+    if (!response.ok) throw new Error(`Cache fetch failed: HTTP ${response.status}`);
+    return response.json();
+}
+
+export async function fetchStreetsFromOSM(boundaries, cityMeta = null) {
+    const mainBoundary = getLargestPolygon(boundaries);
+    if (!mainBoundary) return { type: 'FeatureCollection', features: [] };
+
+    const rawBbox = boundaryBbox(mainBoundary);
+    if (!rawBbox) return { type: 'FeatureCollection', features: [] };
+
+    if (isSeattle(cityMeta)) {
+        try {
+            console.log('Using cached Seattle OSM data...');
+            const osmData = await fetchCachedSeattleWays();
+            console.log('Cached data has', osmData.elements?.length || 0, 'street elements');
+            return processOSMData(osmData, mainBoundary);
+        } catch (error) {
+            console.warn('Failed to load cached Seattle data, falling back to live Overpass:', error);
+        }
+    }
+
+    const bbox = { ...rawBbox };
     const expansion = 0.02;
     bbox.south -= expansion;
     bbox.north += expansion;
     bbox.west -= expansion;
     bbox.east += expansion;
-    
+
     const overpassQuery = `[out:json][timeout:60];(way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|residential|unclassified)$"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["junction"="roundabout"]["highway"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out geom;`;
-    
+
     try {
         console.log('Making Overpass API request...');
         const response = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: overpassQuery });
         if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
         const osmData = await response.json();
-        
+
         console.log('Overpass API returned', osmData.elements?.length || 0, 'street elements');
-        
+
         return processOSMData(osmData, mainBoundary);
-    } catch (error) { 
-        console.error('Error fetching OSM data:', error); 
-        throw error; 
+    } catch (error) {
+        console.error('Error fetching OSM data:', error);
+        throw error;
     }
 }
 

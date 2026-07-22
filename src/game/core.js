@@ -112,6 +112,8 @@ export function confirmAndLoadCity() {
     if (!state.previewCity) return;
 
     state.cityBoundaries = state.previewCity.boundaries;
+    state.selectedCityOsmId = state.previewCity.osmId ?? null;
+    state.selectedCityOsmType = state.previewCity.osmType ?? null;
     const center = calculateBoundariesCenter(state.cityBoundaries);
 
     const previewInfo = document.getElementById('preview-info');
@@ -156,7 +158,10 @@ export async function loadStreetsForCity(boundaries, lat, lng) {
     setLoadingState(true, `Fetching streets for ${areaDescription}...`);
 
     try {
-        state.streetData = await fetchStreetsFromOSM(boundaries);
+        state.streetData = await fetchStreetsFromOSM(boundaries, {
+            osmId: state.selectedCityOsmId,
+            osmType: state.selectedCityOsmType,
+        });
         state.streetGraph = null;
         state.totalLength = state.streetData.features.reduce((sum, f) => sum + f.properties.length, 0);
 
@@ -449,6 +454,8 @@ export function restoreGame(data) {
     state.intersectionDifficulty = data.intersectionDifficulty || 'major-major';
     state.cityBoundaries = data.cityBoundaries;
     state.currentCenter = data.currentCenter;
+    state.selectedCityOsmId = data.selectedCityOsmId ?? null;
+    state.selectedCityOsmType = data.selectedCityOsmType ?? null;
     state.streetData = data.streetData || null;
     state.totalLength = data.totalLength || 0;
     state.foundStreets = new Set(data.foundStreets || []);

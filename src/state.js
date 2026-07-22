@@ -16,6 +16,8 @@ export const state = {
     isSettingCenter: false,
     isPreviewMode: false,
     previewCity: null,
+    selectedCityOsmId: null,
+    selectedCityOsmType: null,
     gameMode: 'streets', // 'streets' or 'intersections'
     intersectionDifficulty: 'major-major', // 'major-major', 'major-all', 'all-all'
 

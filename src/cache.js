@@ -11,6 +11,8 @@ export function saveGameState() {
             cityId: state.cityId,
             cityBoundaries: state.cityBoundaries,
             currentCenter: state.currentCenter,
+            selectedCityOsmId: state.selectedCityOsmId,
+            selectedCityOsmType: state.selectedCityOsmType,
             totalLength: state.totalLength,
             gameMode: state.gameMode,
             intersectionDifficulty: state.intersectionDifficulty,
