@@ -202,6 +202,16 @@ function isSeattle(cityMeta) {
     return cityMeta?.osmType === FALLBACK_SEATTLE.osmType && cityMeta?.osmId === FALLBACK_SEATTLE.osmId;
 }
 
+// Older saved sessions predate osmId/osmType tracking, so restoring them can't
+// identify Seattle that way. currentCenter has been saved since the very first
+// cache format, so use proximity to Seattle's known center as a fallback signal
+// (close enough to only match Seattle itself, not neighboring cities like Bellevue).
+export function isLikelyFallbackSeattle(center) {
+    if (!Array.isArray(center) || center.length < 2) return false;
+    const [lng, lat] = center;
+    return Math.abs(lng - FALLBACK_SEATTLE.lon) < 0.05 && Math.abs(lat - FALLBACK_SEATTLE.lat) < 0.05;
+}
+
 async function fetchCachedSeattleWays() {
     const response = await fetch(`${import.meta.env.BASE_URL}data/osm/seattle-ways.json`);
     if (!response.ok) throw new Error(`Cache fetch failed: HTTP ${response.status}`);

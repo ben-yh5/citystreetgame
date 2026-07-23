@@ -17,6 +17,7 @@ import {
     getCityBoundaries,
     searchCities,
     FALLBACK_SEATTLE,
+    isLikelyFallbackSeattle,
 } from '../api/osm.js';
 import {
     calculateBoundariesCenter,
@@ -450,6 +451,17 @@ export async function restoreGame(data) {
     state.selectedCityOsmId = data.selectedCityOsmId ?? null;
     state.selectedCityOsmType = data.selectedCityOsmType ?? null;
     state.currentCityName = data.currentCityName ?? null;
+
+    // Saves from before osmId/osmType were tracked can't be matched to Seattle
+    // directly — fall back to inferring it from the saved map center so those
+    // sessions still use the cache instead of a live Overpass call.
+    if ((state.selectedCityOsmId == null || state.selectedCityOsmType == null)
+        && isLikelyFallbackSeattle(state.currentCenter)) {
+        state.selectedCityOsmId = FALLBACK_SEATTLE.osmId;
+        state.selectedCityOsmType = FALLBACK_SEATTLE.osmType;
+        state.currentCityName = state.currentCityName ?? FALLBACK_SEATTLE.name;
+    }
+
     updateLocationLabel();
     state.foundStreets = new Set(data.foundStreets || []);
     state.foundIntersections = new Set(data.foundIntersections || []);
