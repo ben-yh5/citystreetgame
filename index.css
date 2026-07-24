@@ -215,6 +215,7 @@ body {
 .tools-section {
     position: relative;
     padding: 0;
+    margin-top: auto;
     margin-bottom: 0;
     flex-shrink: 0;
 }
