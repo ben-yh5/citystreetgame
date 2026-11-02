@@ -72,7 +72,7 @@ async function fetchWays(bbox, attempts = 3) {
 
         if (response.ok) return response.json();
 
-        const retryable = response.status === 504 || response.status === 429;
+        const retryable = [429, 502, 503, 504].includes(response.status);
         if (!retryable || attempt === attempts) {
             throw new Error(`Overpass request failed: HTTP ${response.status}`);
         }
