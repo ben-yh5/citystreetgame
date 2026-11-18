@@ -1,6 +1,8 @@
 import { getLargestPolygon, pointInPolygon, calculateLineStringLength } from '../utils/geo.js';
 import { state } from '../state.js';
 
+const SMALL_ROUNDABOUT_MAX_METERS = 150; // ring circumference; larger roundabouts keep their own nodes
+
 export const FALLBACK_SEATTLE = {
     name: 'Seattle',
     fullName: 'Seattle, King County, Washington, United States',
@@ -355,6 +357,15 @@ function processOSMData(osmData, boundaries = null) {
         }
     });
     state.roundaboutCoords = roundaboutCoords.size > 0 ? roundaboutCoords : null;
+    // Small closed rings (neighborhood traffic circles) get collapsed to one graph node
+    state.roundaboutRings = roundaboutWays
+        .filter(w => {
+            const first = w.coordinates[0];
+            const last = w.coordinates[w.coordinates.length - 1];
+            return first[0] === last[0] && first[1] === last[1]
+                && calculateLineStringLength(w.coordinates) <= SMALL_ROUNDABOUT_MAX_METERS;
+        })
+        .map(w => w.coordinates.map(roundaboutCoordKey));
     if (roundaboutCoords.size > 0) {
         console.log('Collected', roundaboutCoords.size, 'roundabout coordinates for graph connectivity');
     }

@@ -34,6 +34,25 @@ function coordKey(coord) {
     return `${coord[0].toFixed(7)},${coord[1].toFixed(7)}`;
 }
 
+// Bearings are measured over this much road rather than the first coordinate pair,
+// which on curved geometry (traffic circles, slight jogs) gives misleading turns
+const BEARING_SAMPLE_METERS = 20;
+
+function bearingFromStart(coords) {
+    let dist = 0;
+    let i = 1;
+    for (; i < coords.length - 1; i++) {
+        dist += calculateDistanceMeters(coords[i - 1][1], coords[i - 1][0], coords[i][1], coords[i][0]);
+        if (dist >= BEARING_SAMPLE_METERS) break;
+    }
+    return calculateBearing(coords[0][1], coords[0][0], coords[i][1], coords[i][0]);
+}
+
+function bearingIntoEnd(coords) {
+    const reversed = [...coords].reverse();
+    return (bearingFromStart(reversed) + 180) % 360;
+}
+
 const NODE_MERGE_DISTANCE = 15; // meters — merge nodes within this distance (roundabouts, complex intersections)
 
 // --- GRAPH CONSTRUCTION ---
@@ -105,7 +124,28 @@ export function buildStreetGraph() {
         }
     });
 
-    // Step 3: Merge nearby nodes (handles roundabouts, complex intersections)
+    // Step 3a: Collapse each small traffic circle into one node, so driving through it
+    // reads as a single intersection instead of a cluster of ring vertices
+    if (state.roundaboutRings) {
+        for (const ring of state.roundaboutRings) {
+            const members = ring.filter(k => intersectionNodes.has(k));
+            if (members.length < 2) continue;
+            const streets = new Set();
+            const originalKeys = [];
+            members.forEach(k => {
+                const n = intersectionNodes.get(k);
+                n.streets.forEach(s => streets.add(s));
+                originalKeys.push(...(n.originalKeys || [k]));
+                intersectionNodes.delete(k);
+            });
+            const ringCoords = ring.map(k => k.split(',').map(Number)); // keys are "lng,lat"
+            const lng = ringCoords.reduce((sum, c) => sum + c[0], 0) / ringCoords.length;
+            const lat = ringCoords.reduce((sum, c) => sum + c[1], 0) / ringCoords.length;
+            intersectionNodes.set(coordKey([lng, lat]), { lat, lng, streets, originalKeys });
+        }
+    }
+
+    // Step 3b: Merge nearby nodes (handles roundabouts, complex intersections)
     const mergedNodes = mergeNearbyNodes(intersectionNodes);
 
     // Step 4: Build edges
@@ -155,14 +195,8 @@ export function buildStreetGraph() {
                     // This is an intersection node
                     if (lastNodeId !== null && lastNodeId !== mergedNodeId && edgeCoords.length >= 2 && edgeDistance > 0) {
                         // Create edge from lastNodeId to this node
-                        const exitBearing = calculateBearing(
-                            edgeCoords[0][1], edgeCoords[0][0],
-                            edgeCoords[1][1], edgeCoords[1][0]
-                        );
-                        const entryBearing = calculateBearing(
-                            edgeCoords[edgeCoords.length - 2][1], edgeCoords[edgeCoords.length - 2][0],
-                            edgeCoords[edgeCoords.length - 1][1], edgeCoords[edgeCoords.length - 1][0]
-                        );
+                        const exitBearing = bearingFromStart(edgeCoords);
+                        const entryBearing = bearingIntoEnd(edgeCoords);
 
                         // Add forward edge (always — coordinates already reflect oneway=-1 reversal)
                         addEdge(edges, lastNodeId, mergedNodeId, streetName, edgeDistance, exitBearing, entryBearing, [...edgeCoords]);
@@ -170,14 +204,8 @@ export function buildStreetGraph() {
                         // Add reverse edge only if not one-way
                         if (!segment.oneway) {
                             const reverseCoords = [...edgeCoords].reverse();
-                            const reverseExitBearing = calculateBearing(
-                                reverseCoords[0][1], reverseCoords[0][0],
-                                reverseCoords[1][1], reverseCoords[1][0]
-                            );
-                            const reverseEntryBearing = calculateBearing(
-                                reverseCoords[reverseCoords.length - 2][1], reverseCoords[reverseCoords.length - 2][0],
-                                reverseCoords[reverseCoords.length - 1][1], reverseCoords[reverseCoords.length - 1][0]
-                            );
+                            const reverseExitBearing = bearingFromStart(reverseCoords);
+                            const reverseEntryBearing = bearingIntoEnd(reverseCoords);
                             addEdge(edges, mergedNodeId, lastNodeId, streetName, edgeDistance, reverseExitBearing, reverseEntryBearing, reverseCoords);
                         }
                     }
@@ -303,7 +331,7 @@ function mergeNearbyNodes(nodes) {
             lat: mergedLat,
             lng: mergedLng,
             streets: clusterStreets,
-            originalKeys: cluster
+            originalKeys: cluster.flatMap(k => nodes.get(k).originalKeys || [k])
         });
     }
 

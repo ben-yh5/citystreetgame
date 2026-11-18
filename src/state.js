@@ -47,4 +47,5 @@ export const state = {
 
     // OSM Data
     roundaboutCoords: null, // Set<coordKey> from unnamed roundabout ways
+    roundaboutRings: null, // coordKey[] per small closed traffic circle
 };
