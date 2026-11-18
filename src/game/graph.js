@@ -128,7 +128,7 @@ export function buildStreetGraph() {
     // reads as a single intersection instead of a cluster of ring vertices
     if (state.roundaboutRings) {
         for (const ring of state.roundaboutRings) {
-            const members = [...new Set(ring)].filter(k => intersectionNodes.has(k)); // closed rings repeat their first key
+            const members = [...new Set(ring)].filter(k => intersectionNodes.has(k)); // rings repeat shared endpoint keys
             if (members.length < 2) continue;
             const streets = new Set();
             const originalKeys = [];

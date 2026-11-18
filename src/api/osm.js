@@ -357,15 +357,29 @@ function processOSMData(osmData, boundaries = null) {
         }
     });
     state.roundaboutCoords = roundaboutCoords.size > 0 ? roundaboutCoords : null;
-    // Small closed rings (neighborhood traffic circles) get collapsed to one graph node
-    state.roundaboutRings = roundaboutWays
-        .filter(w => {
-            const first = w.coordinates[0];
-            const last = w.coordinates[w.coordinates.length - 1];
-            return first[0] === last[0] && first[1] === last[1]
-                && calculateLineStringLength(w.coordinates) <= SMALL_ROUNDABOUT_MAX_METERS;
-        })
-        .map(w => w.coordinates.map(roundaboutCoordKey));
+    // Small rings (neighborhood traffic circles) get collapsed to one graph node. Some are
+    // mapped as several arcs, so stitch ways that share an endpoint into one ring first.
+    const ringParent = roundaboutWays.map((_, i) => i);
+    const findRing = i => (ringParent[i] === i ? i : (ringParent[i] = findRing(ringParent[i])));
+    const wayByEndpoint = new Map();
+    roundaboutWays.forEach((w, i) => {
+        [w.coordinates[0], w.coordinates[w.coordinates.length - 1]].forEach(coord => {
+            const key = roundaboutCoordKey(coord);
+            if (wayByEndpoint.has(key)) ringParent[findRing(i)] = findRing(wayByEndpoint.get(key));
+            else wayByEndpoint.set(key, i);
+        });
+    });
+    const rings = new Map(); // root way index -> { keys, length }
+    roundaboutWays.forEach((w, i) => {
+        const root = findRing(i);
+        if (!rings.has(root)) rings.set(root, { keys: [], length: 0 });
+        const ring = rings.get(root);
+        ring.keys.push(...w.coordinates.map(roundaboutCoordKey));
+        ring.length += calculateLineStringLength(w.coordinates);
+    });
+    state.roundaboutRings = [...rings.values()]
+        .filter(r => r.length <= SMALL_ROUNDABOUT_MAX_METERS)
+        .map(r => r.keys);
     if (roundaboutCoords.size > 0) {
         console.log('Collected', roundaboutCoords.size, 'roundabout coordinates for graph connectivity');
     }
