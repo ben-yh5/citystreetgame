@@ -35,7 +35,7 @@ async function fetchBoundary() {
 }
 
 function buildOverpassQuery(bbox) {
-    return `[out:json][timeout:60];(way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|residential|unclassified)$"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["junction"="roundabout"]["highway"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out geom;`;
+    return `[out:json][timeout:60];(way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|residential|unclassified)$"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["junction"="roundabout"]["highway"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["highway"~"^(motorway|motorway_link|trunk|trunk_link)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out geom;`;
 }
 
 function computeExpandedBbox(boundaries) {

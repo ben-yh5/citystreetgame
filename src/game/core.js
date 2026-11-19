@@ -483,7 +483,6 @@ export async function restoreGame(data) {
             osmType: state.selectedCityOsmType,
         });
         state.totalLength = state.streetData.features.reduce((sum, f) => sum + f.properties.length, 0);
-        rebuildStreetSegmentsData();
 
         const finishRestore = () => {
             setupCityMapLayers(state.cityBoundaries, state.currentCenter[1], state.currentCenter[0]);
@@ -520,37 +519,4 @@ export async function restoreGame(data) {
     } finally {
         setTimeout(() => setLoadingState(false), 500);
     }
-}
-
-function rebuildStreetSegmentsData() {
-    state.streetSegmentsData = new Map();
-    if (!state.streetData) return;
-
-    state.streetData.features.forEach(feature => {
-        const name = feature.properties.name;
-        const type = feature.properties.type;
-        const highway = feature.properties.highway;
-        const segments = [];
-
-        if (feature.geometry.type === 'LineString') {
-            segments.push({
-                coordinates: feature.geometry.coordinates,
-                type,
-                highway,
-                length: feature.properties.length
-            });
-        } else if (feature.geometry.type === 'MultiLineString') {
-            const segCount = feature.geometry.coordinates.length;
-            feature.geometry.coordinates.forEach(coords => {
-                segments.push({
-                    coordinates: coords,
-                    type,
-                    highway,
-                    length: feature.properties.length / segCount
-                });
-            });
-        }
-
-        state.streetSegmentsData.set(name, segments);
-    });
 }

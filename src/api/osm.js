@@ -1,5 +1,8 @@
 import { getLargestPolygon, pointInPolygon, calculateLineStringLength } from '../utils/geo.js';
 import { state } from '../state.js';
+import { resolveHighwayNames } from './highways.js';
+
+const SMALL_ROUNDABOUT_MAX_METERS = 150; // ring circumference; larger roundabouts keep their own nodes
 
 export const FALLBACK_SEATTLE = {
     name: 'Seattle',
@@ -243,7 +246,7 @@ export async function fetchStreetsFromOSM(boundaries, cityMeta = null) {
     bbox.west -= expansion;
     bbox.east += expansion;
 
-    const overpassQuery = `[out:json][timeout:60];(way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|residential|unclassified)$"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["junction"="roundabout"]["highway"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out geom;`;
+    const overpassQuery = `[out:json][timeout:60];(way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|residential|unclassified)$"]["name"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["junction"="roundabout"]["highway"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});way["highway"~"^(motorway|motorway_link|trunk|trunk_link)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out geom;`;
 
     try {
         console.log('Making Overpass API request...');
@@ -272,10 +275,13 @@ function processOSMData(osmData, boundaries = null) {
         return { type: 'FeatureCollection', features: [] };
     }
     
+    // Freeways and their ramps are named by route ("I-5") rather than by name tag
+    const highwayNames = resolveHighwayNames(osmData.elements);
+
     osmData.elements.forEach(element => {
-        if (element.type === 'way' && element.tags?.name && element.geometry) {
+        const streetName = highwayNames.get(element) || element.tags?.name;
+        if (element.type === 'way' && streetName && element.geometry) {
             totalStreets++;
-            const streetName = element.tags.name;
             const coordinates = element.geometry.map(node => [node.lon, node.lat]).filter(c => !isNaN(c[0]) && !isNaN(c[1]));
             if (coordinates.length < 2) return;
             
@@ -355,6 +361,29 @@ function processOSMData(osmData, boundaries = null) {
         }
     });
     state.roundaboutCoords = roundaboutCoords.size > 0 ? roundaboutCoords : null;
+    // Small rings (neighborhood traffic circles) get collapsed to one graph node. Some are
+    // mapped as several arcs, so stitch ways that share an endpoint into one ring first.
+    const ringParent = roundaboutWays.map((_, i) => i);
+    const findRing = i => (ringParent[i] === i ? i : (ringParent[i] = findRing(ringParent[i])));
+    const wayByEndpoint = new Map();
+    roundaboutWays.forEach((w, i) => {
+        [w.coordinates[0], w.coordinates[w.coordinates.length - 1]].forEach(coord => {
+            const key = roundaboutCoordKey(coord);
+            if (wayByEndpoint.has(key)) ringParent[findRing(i)] = findRing(wayByEndpoint.get(key));
+            else wayByEndpoint.set(key, i);
+        });
+    });
+    const rings = new Map(); // root way index -> { keys, length }
+    roundaboutWays.forEach((w, i) => {
+        const root = findRing(i);
+        if (!rings.has(root)) rings.set(root, { keys: [], length: 0 });
+        const ring = rings.get(root);
+        ring.keys.push(...w.coordinates.map(roundaboutCoordKey));
+        ring.length += calculateLineStringLength(w.coordinates);
+    });
+    state.roundaboutRings = [...rings.values()]
+        .filter(r => r.length <= SMALL_ROUNDABOUT_MAX_METERS)
+        .map(r => r.keys);
     if (roundaboutCoords.size > 0) {
         console.log('Collected', roundaboutCoords.size, 'roundabout coordinates for graph connectivity');
     }

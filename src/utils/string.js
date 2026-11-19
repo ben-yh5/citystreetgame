@@ -19,3 +19,21 @@ export function normalizeStreetName(name) {
     // If still empty (e.g. just "North"), return original trimmed
     return normalized || originalLower.trim();
 }
+
+// Parses highway names like "I-5", "i5", "Interstate 5", "SR 520", "WA-520", "Highway 99",
+// "US 2" or a bare "520" into { system, number }. system is 'i', 'us', 'state', or null
+// when the input doesn't say (bare number, "highway", "route"), which matches any system.
+export function parseHighwayName(name) {
+    const lower = name.trim().toLowerCase();
+    const bare = lower.match(/^(\d+[a-z]?)$/);
+    if (bare) return { system: null, number: bare[1] };
+
+    const match = lower.match(/^(interstate|state route|state highway|us route|us highway|highway|hwy|route|[a-z]{1,3})[\s-]*(\d+[a-z]?)$/);
+    if (!match) return null;
+    const prefix = match[1];
+    let system = 'state'; // "SR", "WA", other state codes, "state route"
+    if (prefix === 'i' || prefix === 'interstate') system = 'i';
+    else if (prefix === 'us' || prefix.startsWith('us ')) system = 'us';
+    else if (['highway', 'hwy', 'route'].includes(prefix)) system = null;
+    return { system, number: match[2] };
+}

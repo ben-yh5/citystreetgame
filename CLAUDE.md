@@ -27,6 +27,7 @@ The app is fully static — no backend process needs to be running for any game 
 - `src/state.js` — single mutable `state` object used everywhere (global state pattern)
 - `src/cache.js` — localStorage save/load
 - `src/api/osm.js` — Overpass API + Nominatim city search; populates `state.streetData` / `state.streetSegmentsData`
+- `src/api/highways.js` — `resolveHighwayNames()` names freeways by route ref ("I-5") and assigns each ramp to one highway
 - `src/api/backend.js` — client wrapper for the unused `backend/` FastAPI service (dead code, not imported)
 - `src/map/mapbox.js` — map setup, layers, tooltips
 - `src/utils/string.js` — `normalizeStreetName()` strips directionals and road suffixes for fuzzy matching
@@ -66,6 +67,13 @@ The app is fully static — no backend process needs to be running for any game 
 - `fetchStreetsFromOSM(boundaries, cityMeta)` uses the cache when `cityMeta.osmId`/`osmType` match Seattle's known OSM relation (`237385`, see `FALLBACK_SEATTLE` in `osm.js`), set on `state.selectedCityOsmId`/`selectedCityOsmType` when a city is confirmed in `core.js`; falls back to a live Overpass fetch on any load failure or when a different city is selected
 - OSM-ID matching was chosen over bbox comparison because Seattle's official boundary is a MultiPolygon with two similarly-sized parts — `getLargestPolygon()`'s area tie-break isn't stable across independent Nominatim requests, so bbox equality between a live fetch and the cache is unreliable
 - **Note:** the fetch script's Overpass query is deliberately broader than what this app itself needs (no `name` requirement, includes `living_street`/`service`), because `seattle-ways.json` is also published via GitHub Pages as a shared raw-data source for other projects. This app's own `processOSMData()` already discards unnamed ways, so the extra breadth is harmless here — but don't narrow the query back down without checking what else reads this file.
+
+### Highways
+- Both Overpass queries (`osm.js` and the cache script) fetch motorway/trunk ways and ramps even without a `name`, since freeway mainlines usually carry only `ref` and ramps carry nothing
+- Motorways are named by formatted ref (`I 5 Express` → `I-5`); trunks keep their street name (Aurora Avenue North stays Aurora, not SR 99)
+- Unnamed ramps follow the ramp network to a highway: an exit ramp belongs to the highway it leaves (also highway-to-highway ramps), an entrance ramp from a street belongs to the highway it joins
+- Streets mode accepts highway spellings via `parseHighwayName()` ("i5", "Interstate 5", "Highway 99", bare "520")
+- Intersections mode skips freeways (all-motorway streets), since their street crossings are overpasses
 
 ## Deployment
 - GitHub Pages with base path `/citystreetgame/` (see `vite.config.js`)
