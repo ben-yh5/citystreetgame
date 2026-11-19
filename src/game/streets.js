@@ -1,7 +1,7 @@
 import { state } from '../state.js';
 import { showMessage, updateStats } from './ui.js';
 import { updateFoundStreetsLayer, highlightStreet, clearHighlight } from '../map/mapbox.js';
-import { normalizeStreetName } from '../utils/string.js';
+import { normalizeStreetName, parseHighwayName } from '../utils/string.js';
 import { saveGameState } from '../cache.js';
 
 // Forward reference - set by core.js to avoid circular dependency
@@ -74,6 +74,17 @@ export function findAllMatchingStreets(inputName) {
 
     if (exactMatches.length > 0) {
         return exactMatches;
+    }
+
+    // Highways answer to their common spellings: "I5", "Interstate 5", "Highway 99", "520"
+    const inputHighway = parseHighwayName(inputName);
+    if (inputHighway) {
+        const highwayMatches = state.streetData.features.filter(f => {
+            const highway = parseHighwayName(f.properties.name);
+            return highway && highway.number === inputHighway.number
+                && (!inputHighway.system || !highway.system || inputHighway.system === highway.system);
+        });
+        if (highwayMatches.length > 0) return highwayMatches;
     }
 
     const inputNormalized = normalizeStreetName(inputName);
