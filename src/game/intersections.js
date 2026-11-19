@@ -8,6 +8,13 @@ import {
 } from '../utils/geo.js';
 import { normalizeStreetName } from '../utils/string.js';
 
+// Freeways meet streets only via ramps; where they cross a street it's an overpass,
+// which the geometric check below would mistake for an intersection
+function isFreeway(street) {
+    const segments = state.streetSegmentsData?.get(street.properties.name);
+    return !!segments && segments.every(s => s.highway === 'motorway' || s.highway === 'motorway_link');
+}
+
 // --- INTERSECTION GENERATION (Improved with Location-Specific Classification) ---
 export function getStreetTypeCategory(streetType) {
     const major = ['major', 'primary', 'secondary', 'tertiary'];
@@ -59,6 +66,7 @@ export function findIntersectingStreets(targetStreet) {
         .filter(s => {
             // Filter out exact name matches
             if (s.properties.name === targetStreet.properties.name) return false;
+            if (isFreeway(s)) return false;
             
             // Filter out streets that have the same normalized name (e.g., "E Broadway" vs "Broadway")
             const otherNormalized = normalizeStreetName(s.properties.name);
@@ -207,7 +215,7 @@ export function generateRandomIntersection() {
     }
     
     // Step 2: Try multiple primary streets until we find a valid intersection
-    const shuffledPrimary = [...primaryStreets].sort(() => Math.random() - 0.5);
+    const shuffledPrimary = primaryStreets.filter(s => !isFreeway(s)).sort(() => Math.random() - 0.5);
     
     for (let i = 0; i < Math.min(50, shuffledPrimary.length); i++) {
         const primaryStreet = shuffledPrimary[i];
